@@ -9,9 +9,9 @@ before_install:
   - sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
   - sudo add-apt-repository -y ppa:boost-latest/ppa
   - sudo add-apt-repository -y ppa:andykimpe/cmake3
-  - sudo apt-get -qq update
+  - sudo apt-get -qq update  > /dev/null
 
-  - sudo apt-get -qq install cmake3 boost1.55 gcc-4.8 g++-4.8
+  - sudo apt-get -qq install cmake3 boost1.55 gcc-4.8 g++-4.8  > /dev/null
   - sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.8 90
   - sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-4.8 90
 
