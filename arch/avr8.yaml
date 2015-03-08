@@ -5,7 +5,9 @@
 # executable.
 # Check out http://github.com/wisk/medusa for further information.
 
-# ref:
+# ref: http://lyons42.com/AVR/Opcodes/AVRAllOpcodes.html
+# ref: http://verhoeven272.nl/fruttenboel/AVR/opcodes.html
+
 
 
 architecture_information:
