@@ -1,14 +1,29 @@
 #
 ## Description ################################################################
 # This yaml file tries do detail all avr instruction.
-# It's used by Medusa to generate c++ code in order to disassemble avr
+# It's used by Medusa to generate c++ code in order to disassemble avr8
 # executable.
 # Check out http://github.com/wisk/medusa for further information.
 
 # ref: http://lyons42.com/AVR/Opcodes/AVRAllOpcodes.html
 # ref: http://verhoeven272.nl/fruttenboel/AVR/opcodes.html
+# ref: http://www.atmel.com/images/doc0856.pdf
 
 
 
 architecture_information:
-  name: avr
+  name: avr8
+
+  encoding:
+      
+
+instruction:
+    
+  - format: 'NOP '
+    semantic: []
+    description:  No Operation
+    attribute: [ ]
+    encoding: [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+
+
+
