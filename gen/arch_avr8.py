@@ -25,19 +25,64 @@ class Avr8ArchConvertion(ArchConvertion):
         for insn in all_instructions:
             insn['encoding'] = compiler.ast.flatten(insn['encoding'])
             self._AVR8_VerifyInstruction(insn)
+            self.all_mnemo.add(self._AVR8_GetMnemonic(insn).capitalize())
 
 
     def _AVR8_VerifyInstruction(self, insn):
         enc = insn['encoding']
         if len(enc) != 16:
             raise Exception('Invalid instruction "%s", encoding: %s, length: %d' % (
-            insn['format'], insn['encoding'], len(insn['encoding'])))
+                insn['format'], insn['encoding'], len(insn['encoding'])))
 
     def _AVR8_GetMnemonic(self, insn):
         fmt = insn['format']
         res = ''
         for c in fmt:
-            if not c in string.ascii_letters+string.digits:
+            if not c in string.ascii_letters + string.digits:
                 break
             res += c
         return res
+
+    def _AVR8_GenerateMethodName(self, insn):
+        mnem = self._AVR8_GetMnemonic(insn)
+        mask = self._AVR8_GetMask(insn)
+        value = self._AVR8_GetValue(insn)
+        return 'Instruction_%s_%08x_%08x' % (mnem, mask, value)
+
+    def _AVR8_GetSize(self, insn):
+        return len(insn['encoding'])
+
+    def _AVR8_GetValue(self, insn):
+        enc = insn['encoding']
+        res = 0x0
+        off = 0x0
+        for bit in enc[::-1]:
+            if bit in [1, '(1)']:
+                res |= (1 << off)
+            off += 1
+        return res
+
+    def _AVR8_GetMask(self, insn):
+        enc = insn['encoding']
+        res = 0x0
+        off = 0x0
+        for bit in enc[::-1]:
+            if bit in [0, 1, '(0)', '(1)']:
+                res |= (1 << off)
+            off += 1
+        return res
+
+    def _AVR8_GenerateMethodPrototype(self, insn, in_class=False):
+        mnem = self._ARM_GetMnemonic(insn)
+        meth_fmt = 'bool %s(BinaryStream const& rBinStrm, TOffset Offset, u32 Opcode, Instruction& rInsn)'
+        if in_class == False:
+            meth_fmt = 'bool %sArchitecture::%%s(BinaryStream const& rBinStrm, TOffset Offset, u32 Opcode, Instruction& rInsn)' % self.GetArchName()
+
+        return meth_fmt % self._ARM_GenerateMethodName(insn)
+
+
+    def GenerateHeader(self):
+        res = ''
+        res += 'static char const *m_Mnemonic[%#x];\n' % (len(self.all_mnemo) + 1)
+        for insn in sorted(self.arch['instruction'], key=lambda a: self._AVR8_GetMnemonic(a)):
+            res += self._AVR8_GenerateMethodPrototype(insn, True) + ';\n'
