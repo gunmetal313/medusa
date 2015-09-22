@@ -2,6 +2,7 @@ version: 0.5.{build}
 branches:
   only:
   - dev
+  - appveyorfixcache
 os: Unstable
 configuration: Release
 platform: x64
@@ -13,8 +14,9 @@ before_build:
 - git submodule update --init --recursive
 - md build
 - cd build
-- cmake -G"Visual Studio 12 Win64" -DQT5_CMAKE_PATH=%QTDIR% ..
+- cmake -G"Visual Studio 12 Win64" ..
 build:
+  parallel: true                  # enable MSBuild parallel builds
   project: C:\projects\medusa\build\Medusa.sln
   verbosity: minimal
 test_script:
