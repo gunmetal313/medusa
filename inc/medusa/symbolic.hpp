@@ -35,6 +35,7 @@ private:
 
     void AddExpression(Expression::SPType spExpr);
     Expression::SPType BackTrackExpression(ExpressionMatcher Matcher) const;
+    Expression::LSPType const& GetTrackedExpressions(void) const { return m_TrackedExprs; }
 
     void AddParentBlock(Address const& rAddr);
     std::set<Address> const& GetParentBlocks(void) const;
@@ -64,8 +65,11 @@ public:
     bool AddBlock(Address const& rBlkAddr, Block &rBlk);
 
     Expression::LSPType BacktrackRegister(Address const& RegAddr, u32 RegId) const;
+    Expression::VSPType GetExpressions(void) const;
 
     Track::Context& GetTrackContext(void) { return m_TrackCtxt; }
+
+    std::string ToString(void) const;
 
   private:
     Track::Context m_TrackCtxt;
@@ -92,6 +96,21 @@ private:
   u32 m_PcRegId;
   u32 m_SpRegId;
   bool m_FollowFunction;
+};
+
+class Medusa_EXPORT Symbolic2
+{
+public:
+  Symbolic2(Document& rDoc);
+
+  bool AddBlock(Address const& rAddr);
+  bool GetBlock(Address const& rAddr, Expression::VSPType& rBlocks);
+
+private:
+  bool _DisassembleBasicBlock(Address const& rAddr, Expression::VSPType& rBlocks);
+
+  Document& m_rDoc;
+  std::unordered_map<Address, Expression::VSPType> m_Blocks;
 };
 
 MEDUSA_NAMESPACE_END

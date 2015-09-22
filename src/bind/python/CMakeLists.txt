@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 2.8)
 
-find_package(Boost 1.46 COMPONENTS Python REQUIRED)
+find_package(Boost ${MEDUSA_BOOST_MIN_VERSION} COMPONENTS Python REQUIRED)
+set(Python_ADDITIONAL_VERSIONS ${MEDUSA_PYTHON_VERSION})
 find_package(PythonLibs REQUIRED)
 
 set(SRC
@@ -57,6 +58,15 @@ set(SRC
 
   py_context.cpp
   py_context.hpp
+
+  py_execution.cpp
+  py_execution.hpp
+
+  py_symbolic.cpp
+  py_symbolic.hpp
+
+  py_cpu_information.cpp
+  py_cpu_information.hpp
 )
 
 include_directories(${Boost_INCLUDE_DIRS} ${PYTHON_INCLUDE_DIRS})

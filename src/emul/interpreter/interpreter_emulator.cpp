@@ -14,45 +14,13 @@ InterpreterEmulator::~InterpreterEmulator(void)
 {
 }
 
-bool InterpreterEmulator::Execute(Address const& rAddress, Expression::SPType spExpr)
+bool InterpreterEmulator::Execute(Expression::VSPType const& rExprs)
 {
-  if (auto spSys = expr_cast<SystemExpression>(spExpr))
-  {
-    if (spSys->GetName() == "dump_insn")
-    {
-      if (m_InsnCb)
-        m_InsnCb(m_pCpuCtxt, m_pMemCtxt, spSys->GetAddress());
-      return true;
-    }
-
-    if (spSys->GetName() == "check_exec_hook")
-    {
-      auto RegPc = m_pCpuInfo->GetRegisterByType(CpuInformation::ProgramPointerRegister, m_pCpuCtxt->GetMode());
-      auto RegSz = m_pCpuInfo->GetSizeOfRegisterInBit(RegPc);
-      u64 CurPc = 0;
-      m_pCpuCtxt->ReadRegister(RegPc, &CurPc, RegSz);
-      TestHook(Address(CurPc), Emulator::HookOnExecute);
-    }
-  }
-
-  InterpreterExpressionVisitor Visitor(m_Hooks, m_pCpuCtxt, m_pMemCtxt);
-  auto spCurExpr = spExpr->Visit(&Visitor);
-
-  if (spCurExpr == nullptr)
-    return false;
-
-  return true;
-}
-
-bool InterpreterEmulator::Execute(Address const& rAddress, Expression::LSPType const& rExprList)
-{
-  InterpreterExpressionVisitor Visitor(m_Hooks, m_pCpuCtxt, m_pMemCtxt);
-
-  for (Expression::SPType spExpr : rExprList)
+  for (Expression::SPType spExpr : rExprs)
   {
     if (auto spSys = expr_cast<SystemExpression>(spExpr))
     {
-      if (spSys->GetName() == "dump_insn")
+      if (spSys->GetName() == "call_insn_cb")
       {
         if (m_InsnCb)
           m_InsnCb(m_pCpuCtxt, m_pMemCtxt, spSys->GetAddress());
@@ -61,16 +29,22 @@ bool InterpreterEmulator::Execute(Address const& rAddress, Expression::LSPType c
 
       if (spSys->GetName() == "check_exec_hook")
       {
-        auto RegPc = m_pCpuInfo->GetRegisterByType(CpuInformation::ProgramPointerRegister, m_pCpuCtxt->GetMode());
-        auto RegSz = m_pCpuInfo->GetSizeOfRegisterInBit(RegPc);
-        u64 CurPc = 0;
-        if (!m_pCpuCtxt->ReadRegister(RegPc, &CurPc, RegSz))
+        Address CurAddr;
+        if (!m_pCpuCtxt->GetAddress(CpuContext::AddressExecution, CurAddr))
           return false;
-        TestHook(Address(CurPc), Emulator::HookOnExecute);
+        // HACK(KS):
+        CurAddr.SetBase(0x0);
+        TestHook(CurAddr, Emulator::HookOnExecute);
         continue;
+      }
+
+      if (spSys->GetName() == "stop")
+      {
+        return false;
       }
     }
 
+    InterpreterExpressionVisitor Visitor(m_Hooks, m_pCpuCtxt, m_pMemCtxt, m_Vars);
     auto spCurExpr = spExpr->Visit(&Visitor);
     if (spCurExpr == nullptr)
     {
@@ -78,20 +52,26 @@ bool InterpreterEmulator::Execute(Address const& rAddress, Expression::LSPType c
       std::cout << spExpr->ToString() << std::endl;
       return false;
     }
-
-//#ifdef _DEBUG
-//    // DEBUG
-//    std::cout << "cur: " << spExpr->ToString() << std::endl;
-//    std::cout << "res: " << spCurExpr->ToString() << std::endl;
-//    std::cout << m_pCpuCtxt->ToString() << std::endl;
-//#endif
   }
 
   return true;
 }
 
+InterpreterEmulator::InterpreterExpressionVisitor::~InterpreterExpressionVisitor(void)
+{
+  if (!m_Values.empty())
+  {
+    Log::Write("emul_interpreter") << "unconsumed value" << LogEnd;
+    for (auto const& rValue : m_Values)
+    {
+      Log::Write("emul_interpreter") << "leaked value: " << rValue.ToString() << LogEnd;
+    }
+  }
+}
+
 Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitSystem(SystemExpression::SPType spSysExpr)
 {
+  Log::Write("emul_interpreter").Level(LogError) << "not yet implemented system called" << LogEnd;
   return nullptr; // TODO
 }
 
@@ -99,71 +79,117 @@ Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitBind(
 {
   Expression::LSPType SmplExprList;
   for (Expression::SPType spExpr : spBindExpr->GetBoundExpressions())
-    SmplExprList.push_back(spExpr->Visit(this));
-  return Expr::MakeBind(SmplExprList);
+    if (spExpr->Visit(this) == nullptr)
+      return nullptr;
+  return spBindExpr;
 }
 
 Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitTernaryCondition(TernaryConditionExpression::SPType spTernExpr)
 {
-  bool Cond;
+  State OldState = m_State;
+  m_State = Read;
+  auto spRefExpr = spTernExpr->GetReferenceExpression()->Visit(this);
+  auto spTestExpr = spTernExpr->GetTestExpression()->Visit(this);
+  m_State = m_State;
 
-  if (!_EvaluateCondition(spTernExpr, Cond))
+  if (spRefExpr == nullptr || spTestExpr == nullptr)
     return nullptr;
 
-  return (Cond ? spTernExpr->GetTrueExpression()->Clone() : spTernExpr->GetFalseExpression()->Clone());
+  bool Cond;
+  if (!_EvaluateComparison(spTernExpr->GetType(), Cond))
+    return nullptr;
+
+  if (Cond)
+  {
+    auto spTrueExpr = spTernExpr->GetTrueExpression()->Visit(this);
+    if (spTrueExpr == nullptr)
+      return nullptr;
+  }
+  else
+  {
+    auto spFalseExpr = spTernExpr->GetFalseExpression()->Visit(this);
+    if (spFalseExpr == nullptr)
+      return nullptr;
+  }
+
+  return spTernExpr;
 }
 
 Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitIfElseCondition(IfElseConditionExpression::SPType spIfElseExpr)
 {
-  bool Cond;
+  State OldState = m_State;
+  m_State = Read;
+  auto spRefExpr = spIfElseExpr->GetReferenceExpression()->Visit(this);
+  auto spTestExpr = spIfElseExpr->GetTestExpression()->Visit(this);
+  m_State = OldState;
 
-  if (!_EvaluateCondition(spIfElseExpr, Cond))
+  if (spRefExpr == nullptr || spTestExpr == nullptr)
     return nullptr;
 
-  auto spExpr = (Cond ? spIfElseExpr->GetThenExpression()->Clone() : (spIfElseExpr->GetElseExpression() ? spIfElseExpr->GetElseExpression()->Clone() : Expr::MakeBoolean(false)));
-  if (spExpr != nullptr)
-    return spExpr->Visit(this);
+  bool Cond;
+  if (!_EvaluateComparison(spIfElseExpr->GetType(), Cond))
+    return nullptr;
 
-  return spExpr;
+  if (Cond)
+  {
+    auto spThenExpr = spIfElseExpr->GetThenExpression()->Visit(this);
+    if (spThenExpr == nullptr)
+      return nullptr;
+  }
+  else if (spIfElseExpr->GetElseExpression() != nullptr)
+  {
+    auto spElseExpr = spIfElseExpr->GetElseExpression()->Visit(this);
+    if (spElseExpr == nullptr)
+      return nullptr;
+  }
+
+  return spIfElseExpr;
 }
 
-// FIXME:
 Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitWhileCondition(WhileConditionExpression::SPType spWhileExpr)
 {
-  return nullptr;
+  while (true)
+  {
+    State OldState = m_State;
+    m_State = Read;
+    auto spRefExpr = spWhileExpr->GetReferenceExpression()->Visit(this);
+    auto spTestExpr = spWhileExpr->GetTestExpression()->Visit(this);
+    m_State = OldState;
+
+    if (spRefExpr == nullptr || spTestExpr == nullptr)
+      return nullptr;
+
+    bool Cond;
+    if (!_EvaluateComparison(spWhileExpr->GetType(), Cond))
+      return nullptr;
+
+    if (!Cond)
+      break;
+
+    auto spBodyExpr = spWhileExpr->GetBodyExpression()->Visit(this);
+    if (spBodyExpr == nullptr)
+      return nullptr;
+  }
+
+  return spWhileExpr;
 }
 
-// TODO: double-check this method
 Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitAssignment(AssignmentExpression::SPType spAssignExpr)
 {
-  auto spDst = spAssignExpr->GetDestinationExpression()->Visit(this);
+  if (auto spDstVecId = expr_cast<VectorIdentifierExpression>(spAssignExpr->GetDestinationExpression()))
+    m_NrOfValueToRead = spDstVecId->GetVector().size();
+  else
+    m_NrOfValueToRead = 0;
+
+  State OldState = m_State;
+
+  m_State = Read;
   auto spSrc = spAssignExpr->GetSourceExpression()->Visit(this);
+  m_State = Write;
+  auto spDst = spAssignExpr->GetDestinationExpression()->Visit(this);
+  m_State = OldState;
 
   if (spDst == nullptr || spSrc == nullptr)
-    return nullptr;
-
-  Expression::DataContainerType Data;
-  spDst->Prepare(Data);
-  if (!spSrc->Read(m_pCpuCtxt, m_pMemCtxt, Data))
-    return nullptr;
-
-  // TODO: handle size of access
-  Address LeftAddress, RightAddress;
-  if (spDst->GetAddress(m_pCpuCtxt, m_pMemCtxt, LeftAddress))
-  {
-    auto itHook = m_rHooks.find(LeftAddress);
-    if (itHook != std::end(m_rHooks) && itHook->second.m_Type & Emulator::HookOnWrite)
-      itHook->second.m_Callback(m_pCpuCtxt, m_pMemCtxt, LeftAddress);
-  }
-
-  if (spSrc->GetAddress(m_pCpuCtxt, m_pMemCtxt, RightAddress))
-  {
-    auto itHook = m_rHooks.find(RightAddress);
-    if (itHook != std::end(m_rHooks) && itHook->second.m_Type & Emulator::HookOnRead)
-      itHook->second.m_Callback(m_pCpuCtxt, m_pMemCtxt, RightAddress);
-  }
-
-  if (!spDst->Write(m_pCpuCtxt, m_pMemCtxt, Data))
     return nullptr;
 
   return spSrc;
@@ -176,440 +202,514 @@ Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitUnary
   if (spExpr == nullptr)
     return nullptr;
 
-  // TODO: handle size of access
-  Address ExprAddr;
-  if (spExpr->GetAddress(m_pCpuCtxt, m_pMemCtxt, ExprAddr) == true)
-  {
-    auto itHook = m_rHooks.find(ExprAddr);
-    if (itHook != std::end(m_rHooks) && itHook->second.m_Type & Emulator::HookOnWrite)
-      itHook->second.m_Callback(m_pCpuCtxt, m_pMemCtxt, ExprAddr);
-  }
+  if (m_Values.size() < 1)
+    return nullptr;
+  auto Val = m_Values.back();
+  m_Values.pop_back();
 
-  u8 Op = spUnOpExpr->GetOperation();
-
-  switch (spExpr->GetSizeInBit())
+  switch (spUnOpExpr->GetOperation())
   {
-  case  1: // TODO: _DoBinaryOperation<bool>?
-  case  8: return _DoUnaryOperation<s8>(Op,  spExpr);
-  case 16: return _DoUnaryOperation<s16>(Op, spExpr);
-  case 32: return _DoUnaryOperation<s32>(Op, spExpr);
-  case 64: return _DoUnaryOperation<s64>(Op, spExpr);
+  case OperationExpression::OpNot:
+    m_Values.push_back(Val.Not());
+    break;
+
+  case OperationExpression::OpNeg:
+    m_Values.push_back(Val.Neg());
+    break;
+
+  case OperationExpression::OpSwap:
+    m_Values.push_back(Val.Swap());
+    break;
+
+  case OperationExpression::OpBsf:
+    m_Values.push_back(Val.Bsf());
+    break;
+
+  case OperationExpression::OpBsr:
+    m_Values.push_back(Val.Bsr());
+    break;
+
   default:
-    Log::Write("emul_interpreter") << "unhandled bit size for unary operation" << LogEnd;
+    Log::Write("emul_interpreter").Level(LogError) << "unknown unary operator" << LogEnd;
     return nullptr;
   }
+
+  return spUnOpExpr;
 }
 
 Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitBinaryOperation(BinaryOperationExpression::SPType spBinOpExpr)
 {
+  if (spBinOpExpr->GetOperation() == OperationExpression::OpXchg)
+  {
+    Log::Write("emul_interpreter") << "operation exchange is deprecated" << LogEnd;
+    return nullptr;
+  }
+
   auto spLeft = spBinOpExpr->GetLeftExpression()->Visit(this);
   auto spRight = spBinOpExpr->GetRightExpression()->Visit(this);
 
   if (spLeft == nullptr || spRight == nullptr)
     return nullptr;
 
-  // TODO: handle size of access
-  Address LeftAddress, RightAddress;
-  if (spLeft->GetAddress(m_pCpuCtxt, m_pMemCtxt, LeftAddress) == true)
-  {
-    auto itHook = m_rHooks.find(LeftAddress);
-    if (itHook != std::end(m_rHooks) && itHook->second.m_Type & Emulator::HookOnWrite)
-      itHook->second.m_Callback(m_pCpuCtxt, m_pMemCtxt, LeftAddress);
-  }
+  if (m_Values.size() < 2)
+    return nullptr;
 
-  if (spRight->GetAddress(m_pCpuCtxt, m_pMemCtxt, RightAddress) == true)
-  {
-    auto itHook = m_rHooks.find(RightAddress);
-    if (itHook != std::end(m_rHooks) && itHook->second.m_Type & Emulator::HookOnRead)
-      itHook->second.m_Callback(m_pCpuCtxt, m_pMemCtxt, RightAddress);
-  }
+  auto RightVal = m_Values.back();
+  m_Values.pop_back();
+  auto LeftVal = m_Values.back();
+  m_Values.pop_back();
 
-  u8 Op = spBinOpExpr->GetOperation();
-
-  switch (Op)
+  switch (spBinOpExpr->GetOperation())
   {
-  case OperationExpression::OpSext:
-  {
-    Expression::DataContainerType DataLeft, DataRight;
-    DataLeft.resize(1);
-    DataRight.resize(1);
-    if (!spLeft->Read(m_pCpuCtxt, m_pMemCtxt, DataLeft))
-      return nullptr;
-    if (!spRight->Read(m_pCpuCtxt, m_pMemCtxt, DataRight))
-      return nullptr;
-    s64 Left = std::get<1>(DataLeft.front()).convert_to<u64>();
-    u32 LeftBitSize = std::get<0>(DataLeft.front());
-    auto Right = std::get<1>(DataRight.front()).convert_to<u32>();
-    u64 Result = 0;
+    case OperationExpression::OpXchg:
+      break;
 
-    switch (LeftBitSize)
+    case OperationExpression::OpAnd:
+      m_Values.push_back(LeftVal.And(RightVal));
+      break;
+
+    case OperationExpression::OpOr:
+      m_Values.push_back(LeftVal.Or(RightVal));
+      break;
+
+    case OperationExpression::OpXor:
+      m_Values.push_back(LeftVal.Xor(RightVal));
+      break;
+
+    case OperationExpression::OpLls:
+      m_Values.push_back(LeftVal.Lls(RightVal));
+      break;
+
+    case OperationExpression::OpLrs:
+      m_Values.push_back(LeftVal.Lrs(RightVal));
+      break;
+
+    case OperationExpression::OpArs:
+      m_Values.push_back(LeftVal.Ars(RightVal));
+      break;
+
+    case OperationExpression::OpRol:
+      m_Values.push_back(LeftVal.Rol(RightVal));
+      break;
+
+    case OperationExpression::OpRor:
+      m_Values.push_back(LeftVal.Ror(RightVal));
+      break;
+
+    case OperationExpression::OpAdd:
+      m_Values.push_back(LeftVal.Add(RightVal));
+      break;
+
+    case OperationExpression::OpAddFloat:
+      m_Values.push_back(LeftVal.AddFloat(RightVal));
+      break;
+
+    case OperationExpression::OpSub:
+      m_Values.push_back(LeftVal.Sub(RightVal));
+      break;
+
+    case OperationExpression::OpMul:
+      m_Values.push_back(LeftVal.Mul(RightVal));
+      break;
+
+    case OperationExpression::OpSDiv:
+      m_Values.push_back(LeftVal.SDiv(RightVal));
+      break;
+
+    case OperationExpression::OpUDiv:
+      m_Values.push_back(LeftVal.UDiv(RightVal));
+      break;
+
+    case OperationExpression::OpSMod:
+      m_Values.push_back(LeftVal.SMod(RightVal));
+      break;
+
+    case OperationExpression::OpUMod:
+      m_Values.push_back(LeftVal.UMod(RightVal));
+      break;
+
+    case OperationExpression::OpSext:
     {
-    case  8: Result = static_cast<s64>(SignExtend<s64, 8>(Left)); break;
-    case 16: Result = static_cast<s64>(SignExtend<s64, 16>(Left)); break;
-    case 32: Result = static_cast<s64>(SignExtend<s64, 32>(Left)); break;
-    case 64: Result = Left; break;
+      auto Result = LeftVal;
+      Result.SignExtend(RightVal.ConvertTo<u16>());
+      m_Values.push_back(Result);
+      break;
+    }
+
+    case OperationExpression::OpZext:
+    {
+      auto Result = LeftVal;
+      Result.ZeroExtend(RightVal.ConvertTo<u16>());
+      m_Values.push_back(Result);
+      break;
+    }
+
+    case OperationExpression::OpInsertBits:
+      m_Values.push_back((LeftVal << RightVal.Lsb()) & RightVal);
+      break;
+
+    case OperationExpression::OpExtractBits:
+      m_Values.push_back((LeftVal & RightVal) >> RightVal.Lsb());
+      break;
+
+    case OperationExpression::OpBcast:
+    {
+      auto Result = LeftVal;
+      Result.BitCast(RightVal.ConvertTo<u16>());
+      m_Values.push_back(Result);
+      break;
+    }
+
     default:
-      Log::Write("emul_interpreter") << "unhandled bit size for sign extend operation" << LogEnd;
+      Log::Write("emul_interpreter").Level(LogError) << "unknown binary operator" << LogEnd;
       return nullptr;
-    }
-
-    return Expr::MakeConst(Right, Result);
   }
 
-  case OperationExpression::OpZext:
+  return spBinOpExpr;
+}
+
+Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitBitVector(BitVectorExpression::SPType spConstExpr)
+{
+  if (m_State != Read)
   {
-    Expression::DataContainerType DataLeft, DataRight;
-    DataLeft.resize(1);
-    DataRight.resize(1);
-    if (!spLeft->Read(m_pCpuCtxt, m_pMemCtxt, DataLeft))
-      return nullptr;
-    if (!spRight->Read(m_pCpuCtxt, m_pMemCtxt, DataRight))
-      return nullptr;
-    u64 Left = std::get<1>(DataLeft.front()).convert_to<u64>();
-    u32 LeftBitSize = std::get<0>(DataLeft.front());
-    auto Right = std::get<1>(DataRight.front()).convert_to<u32>();
-    u64 Result = 0;
-
-    switch (LeftBitSize)
-    {
-    case  8: Result = Left & 0xff; break;
-    case 16: Result = Left & 0xffff; break;
-    case 32: Result = Left & 0xffffffff; break;
-    case 64: Result = Left; break;
-    default:
-      Log::Write("emul_interpreter") << "unhandled bit size for zero extend operation" << LogEnd;
-      return nullptr;
-    }
-
-    return Expr::MakeConst(Right, Result);
-  }
-
-  case OperationExpression::OpXchg:
-  {
-    Expression::DataContainerType DataLeft, DataRight;
-    DataLeft.resize(1);
-    DataRight.resize(1);
-    if (!spLeft->Read(m_pCpuCtxt, m_pMemCtxt, DataLeft))
-      return nullptr;
-    if (!spRight->Read(m_pCpuCtxt, m_pMemCtxt, DataRight))
-      return nullptr;
-    auto Left = std::get<1>(DataLeft.front()).convert_to<u64>();
-    auto Right = std::get<1>(DataRight.front()).convert_to<u32>();
-
-    if (std::get<0>(DataLeft.front()) != std::get<0>(DataRight.front()))
-    {
-      Log::Write("emul_interpreter") << "mismatch size while exchanging data" << LogEnd;
-      return nullptr;
-    }
-
-    if (!spLeft->Write(m_pCpuCtxt, m_pMemCtxt, DataRight))
-      return nullptr;
-    if (!spRight->Write(m_pCpuCtxt, m_pMemCtxt, DataLeft))
-      return nullptr;
-
-    return spBinOpExpr;
-  }
-  } // end of switch (Op)
-
-  auto Bit = std::max(spLeft->GetSizeInBit(), spRight->GetSizeInBit());
-  switch (Bit)
-  {
-  case  1: // TODO: _DoBinaryOperation<bool>?
-  case  8: return _DoBinaryOperation<s8> (Op, spLeft, spRight);
-  case 16: return _DoBinaryOperation<s16>(Op, spLeft, spRight);
-  case 32: return _DoBinaryOperation<s32>(Op, spLeft, spRight);
-  case 64: return _DoBinaryOperation<s64>(Op, spLeft, spRight);
-  default:
-    Log::Write("emul_interpreter") << "unhandled bit size for binary operation" << LogEnd;
+    Log::Write("emul_interpreter").Level(LogError) << "constant can only be read" << LogEnd;
     return nullptr;
   }
+  m_Values.push_back(spConstExpr->GetInt());
+  return spConstExpr;
 }
 
-Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitConstant(ConstantExpression::SPType pConstExpr)
+Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitIdentifier(IdentifierExpression::SPType spIdExpr)
 {
-  return pConstExpr->Clone();
-}
+  switch (m_State)
+  {
+  case Read:
+  {
+    BitVector RegVal(spIdExpr->GetBitSize(), 0);
+    if (!m_pCpuCtxt->ReadRegister(spIdExpr->GetId(), RegVal))
+    {
+      Log::Write("emul_interpreter").Level(LogError) << "unable to read register " << m_pCpuCtxt->GetCpuInformation().ConvertIdentifierToName(spIdExpr->GetId()) << LogEnd;
+      return nullptr;
+    }
+    m_Values.push_back(RegVal);
+    break;
+  }
 
-Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitIdentifier(IdentifierExpression::SPType pIdExpr)
-{
-  return pIdExpr->Clone();
+  case Write:
+  {
+    if (m_Values.empty())
+      return nullptr;
+    BitVector RegVal = m_Values.back();
+    if (!m_pCpuCtxt->WriteRegister(spIdExpr->GetId(), RegVal))
+    {
+      Log::Write("emul_interpreter").Level(LogError) << "unable to write register " << m_pCpuCtxt->GetCpuInformation().ConvertIdentifierToName(spIdExpr->GetId()) << LogEnd;
+      return nullptr;
+    }
+    m_Values.pop_back();
+    break;
+  }
+
+  default:
+    return nullptr;
+  }
+  return spIdExpr;
 }
 
 Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitVectorIdentifier(VectorIdentifierExpression::SPType spVecIdExpr)
 {
-  return spVecIdExpr->Clone();
+  auto const* pCpuInfo = spVecIdExpr->GetCpuInformation();
+  switch (m_State)
+  {
+  case Read:
+  {
+    auto VecId = spVecIdExpr->GetVector();
+    for (auto Id : VecId)
+    {
+      BitVector RegVal(pCpuInfo->GetSizeOfRegisterInBit(Id), 0);
+      if (!m_pCpuCtxt->ReadRegister(Id, RegVal))
+      {
+        Log::Write("emul_interpreter").Level(LogError) << "unable to read register" << LogEnd;
+        return nullptr;
+      }
+      m_Values.push_back(RegVal);
+    }
+    break;
+  }
+
+  case Write:
+  {
+    auto VecId = spVecIdExpr->GetVector();
+    for (auto Id : VecId)
+    {
+      if (m_Values.empty())
+      {
+        Log::Write("emul_interpreter").Level(LogError) << "no value to write into register" << LogEnd;
+        return nullptr;
+      }
+      if (!m_pCpuCtxt->WriteRegister(Id, m_Values.back()))
+      {
+        Log::Write("emul_interpreter").Level(LogError) << "unable to write register" << LogEnd;
+        return nullptr;
+      }
+      m_Values.pop_back();
+    }
+    break;
+  }
+
+  default:
+    return nullptr;
+  }
+
+  return spVecIdExpr;
 }
 
-Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitTrackedIdentifier(TrackedIdentifierExpression::SPType pTrkIdExpr)
+Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitTrack(TrackExpression::SPType spTrkExpr)
 {
-  return pTrkIdExpr->Clone();
+  return spTrkExpr->GetTrackedExpression()->Visit(this);
 }
 
-Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitMemory(MemoryExpression::SPType pMemExpr)
+Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitVariable(VariableExpression::SPType spVarExpr)
 {
-  Expression::SPType pBaseExprVisited = nullptr;
-  if (pMemExpr->GetBaseExpression() != nullptr)
-    pBaseExprVisited = pMemExpr->GetBaseExpression()->Visit(this);
+  switch (m_State)
+  {
+  case Unknown:
+  {
+    switch (spVarExpr->GetAction())
+    {
+    case VariableExpression::Alloc:
+      m_rVars[spVarExpr->GetName()] = BitVector();
+      break;
 
-  auto pOffsetExprVisited = pMemExpr->GetOffsetExpression()->Visit(this);
+    case VariableExpression::Free:
+      m_rVars.erase(spVarExpr->GetName());
+      break;
 
-  return Expr::MakeMem(pMemExpr->GetAccessSizeInBit(), pBaseExprVisited, pOffsetExprVisited, pMemExpr->IsDereferencable());
+    default:
+      Log::Write("emul_interpreter").Level(LogError) << "unknown variable action" << LogEnd;
+      return nullptr;
+    }
+    break;
+  }
+
+  case Read:
+    if (spVarExpr->GetAction() == VariableExpression::Use)
+    {
+      auto itVar = m_rVars.find(spVarExpr->GetName());
+      if (itVar == std::end(m_rVars))
+        return nullptr;
+      m_Values.push_back(itVar->second);
+      break;
+    }
+    else
+    {
+      Log::Write("emul_interpreter").Level(LogError) << "invalid state for variable reading" << LogEnd;
+      return nullptr;
+    }
+
+  case Write:
+    if (spVarExpr->GetAction() == VariableExpression::Use)
+    {
+      auto itVar = m_rVars.find(spVarExpr->GetName());
+      if (itVar == std::end(m_rVars))
+        return nullptr;
+      itVar->second = m_Values.back();
+      m_Values.pop_back();
+      break;
+    }
+    else
+    {
+      Log::Write("emul_interpreter").Level(LogError) << "invalid state for variable writing" << LogEnd;
+      return nullptr;
+    }
+
+  default:
+    return nullptr;
+  }
+
+  return spVarExpr;
 }
 
-Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitSymbolic(SymbolicExpression::SPType pSymExpr)
+Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitMemory(MemoryExpression::SPType spMemExpr)
+{
+  State OldState = m_State;
+  m_State = Read;
+  auto spOffsetExpr = spMemExpr->GetOffsetExpression()->Visit(this);
+  auto spBaseExpr = spMemExpr->GetBaseExpression() ? spMemExpr->GetBaseExpression()->Visit(this) : nullptr;
+  m_State = OldState;
+  if (spOffsetExpr == nullptr)
+  {
+    Log::Write("emul_interpreter").Level(LogError) << "invalid offset" << LogEnd;
+    return nullptr;
+  }
+
+  TBase Base = 0;
+  if (spBaseExpr != nullptr)
+  {
+    if (m_Values.size() < 2)
+    {
+      Log::Write("emul_interpreter").Level(LogError) << "no value for address base" << LogEnd;
+      return nullptr;
+    }
+    Base = m_Values.back().ConvertTo<u16>();
+    m_Values.pop_back();
+  }
+
+  if (m_Values.size() < 1)
+  {
+    Log::Write("emul_interpreter").Level(LogError) << "no value for address offset" << LogEnd;
+    return nullptr;
+  }
+  TOffset Offset = m_Values.back().ConvertTo<TOffset>();
+  m_Values.pop_back();
+
+  Address Addr(Base, Offset);
+
+  u64 LinAddr = 0;
+  if (!m_pCpuCtxt->Translate(Addr, LinAddr))
+    LinAddr = Offset;
+
+  switch (m_State)
+  {
+  default:
+    Log::Write("emul_interpreter").Level(LogError) << "unknown state for address" << LogEnd;
+    return nullptr;
+
+  case Read:
+  {
+    if (spMemExpr->IsDereferencable())
+    {
+      if (m_NrOfValueToRead == 0)
+      {
+        BitVector MemVal(spMemExpr->GetAccessSizeInBit(), 0);
+        if (!m_pMemCtxt->ReadMemory(LinAddr, MemVal))
+        {
+          Log::Write("emul_interpreter").Level(LogError) << "unable to read memory at address: " << LinAddr << LogEnd;
+          return nullptr;
+        }
+        m_Values.push_back(MemVal);
+      }
+      while (m_NrOfValueToRead != 0)
+      {
+        BitVector MemVal(spMemExpr->GetAccessSizeInBit(), 0);
+        if (!m_pMemCtxt->ReadMemory(LinAddr, MemVal))
+        {
+          Log::Write("emul_interpreter").Level(LogError) << "unable to read memory at address: " << LinAddr << LogEnd;
+          return nullptr;
+        }
+        LinAddr += MemVal.GetBitSize() / 8;
+        m_Values.push_back(MemVal);
+        --m_NrOfValueToRead;
+      }
+    }
+    else
+    {
+      m_Values.push_back(BitVector(spMemExpr->GetAccessSizeInBit(), LinAddr));
+    }
+    break;
+  }
+
+  case Write:
+  {
+    if (m_Values.empty())
+    {
+      Log::Write("emul_interpreter").Level(LogError) << "unable to write memory at address: " << LinAddr << LogEnd;
+      return nullptr;
+    }
+
+    // NOTE: Trying to write an non-deferencable address is like
+    // changing its offset.
+    if (!spMemExpr->IsDereferencable())
+    {
+      auto spOffsetExpr = spMemExpr->GetOffsetExpression()->Visit(this);
+      if (spOffsetExpr == nullptr)
+        return nullptr;
+      break;
+    }
+
+    do
+    {
+      auto MemVal = m_Values.back();
+      if (!m_pMemCtxt->WriteMemory(LinAddr, MemVal))
+      {
+        Log::Write("emul_interpreter").Level(LogError) << "unable to write memory at address: " << LinAddr << LogEnd;
+        return nullptr;
+      }
+      m_Values.pop_back();
+      LinAddr += MemVal.GetBitSize() / 8;
+    } while (!m_Values.empty());
+
+    break;
+  }
+  }
+
+  return spMemExpr;
+}
+
+Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::VisitSymbolic(SymbolicExpression::SPType spSymExpr)
 {
   // TODO:
   return nullptr;
 }
 
-bool InterpreterEmulator::InterpreterExpressionVisitor::_EvaluateCondition(ConditionExpression::SPType spCondExpr, bool& rResult)
+bool InterpreterEmulator::InterpreterExpressionVisitor::_EvaluateComparison(u8 CondOp, bool& rRes)
 {
-  u8 Op = spCondExpr->GetType();
-  auto
-    spRefExpr = spCondExpr->GetReferenceExpression()->Visit(this),
-    spTestExpr = spCondExpr->GetTestExpression()->Visit(this);
-
-  if (spRefExpr == nullptr || spTestExpr == nullptr)
-    return false;
-  auto Bit = std::max(spRefExpr->GetSizeInBit(), spTestExpr->GetSizeInBit());
-
-  switch (Bit)
+  if (m_Values.size() < 2)
   {
-  case  1:
-  case  8: return _DoComparison<u8 >(Op, spRefExpr, spTestExpr, rResult);
-  case 16: return _DoComparison<u16>(Op, spRefExpr, spTestExpr, rResult);
-  case 32: return _DoComparison<u32>(Op, spRefExpr, spTestExpr, rResult);
-  case 64: return _DoComparison<u64>(Op, spRefExpr, spTestExpr, rResult);
-  default: return false;
+    Log::Write("emul_interpreter").Level(LogError) << "no enough values to do comparison" << LogEnd;
+    return false;
   }
-}
 
-template<typename _Type>
-bool InterpreterEmulator::InterpreterExpressionVisitor::_DoComparison(u8 Op, Expression::SPType spRefExpr, Expression::SPType spTestExpr, bool& rResult)
-{
-  Expression::DataContainerType RefData, TestData;
+  auto TestVal = m_Values.back();
+  m_Values.pop_back();
+  auto RefVal = m_Values.back();
+  m_Values.pop_back();
 
-  RefData.resize(1);
-  TestData.resize(1);
-
-  if (!spRefExpr->Read(m_pCpuCtxt, m_pMemCtxt, RefData))
-    return false;
-  if (!spTestExpr->Read(m_pCpuCtxt, m_pMemCtxt, TestData))
-    return false;
-
-  // FIXME: vector condition is not supported
-  if (RefData.size() != 1 || TestData.size() != 1)
-    return false;
-
-  auto
-    URef = std::get<1>(RefData.front()).convert_to<typename std::make_unsigned<_Type>::type>(),
-    UTest = std::get<1>(TestData.front()).convert_to<typename std::make_unsigned<_Type>::type>();
-
-  auto
-    SRef = std::get<1>(RefData.front()).convert_to<typename std::make_signed<_Type>::type>(),
-    STest = std::get<1>(TestData.front()).convert_to<typename std::make_signed<_Type>::type>();
-
-  switch (Op)
+  switch (CondOp)
   {
-  default:
-    return false;
-
   case ConditionExpression::CondEq:
-    rResult = URef == UTest;
+    rRes = RefVal.GetUnsignedValue() == TestVal.GetUnsignedValue();
     break;
 
   case ConditionExpression::CondNe:
-    rResult = URef != UTest;
+    rRes = RefVal.GetUnsignedValue() != TestVal.GetUnsignedValue();
     break;
 
   case ConditionExpression::CondUgt:
-    rResult = URef > UTest;
+    rRes = RefVal.GetUnsignedValue() > TestVal.GetUnsignedValue();
     break;
 
   case ConditionExpression::CondUge:
-    rResult = URef >= UTest;
+    rRes = RefVal.GetUnsignedValue() >= TestVal.GetUnsignedValue();
     break;
 
   case ConditionExpression::CondUlt:
-    rResult = URef < UTest;
+    rRes = RefVal.GetUnsignedValue() < TestVal.GetUnsignedValue();
     break;
 
   case ConditionExpression::CondUle:
-    rResult = URef <= UTest;
+    rRes = RefVal.GetUnsignedValue() <= TestVal.GetUnsignedValue();
     break;
 
   case ConditionExpression::CondSgt:
-    rResult = SRef > STest;
+    rRes = RefVal.GetSignedValue() > TestVal.GetSignedValue();
     break;
 
   case ConditionExpression::CondSge:
-    rResult = SRef >= STest;
+    rRes = RefVal.GetSignedValue() >= TestVal.GetSignedValue();
     break;
 
   case ConditionExpression::CondSlt:
-    rResult = SRef < STest;
+    rRes = RefVal.GetSignedValue() < TestVal.GetSignedValue();
     break;
 
   case ConditionExpression::CondSle:
-    rResult = SRef <= STest;
+    rRes = RefVal.GetSignedValue() <= TestVal.GetSignedValue();
     break;
+
+  default:
+    Log::Write("emul_interpreter") << "unknown comparison" << LogEnd;
+    return false;
   }
 
   return true;
-}
-
-template<typename _Type>
-Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::_DoUnaryOperation(u8 Op, Expression::SPType spExpr)
-{
-  Expression::DataContainerType Data;
-
-  spExpr->Prepare(Data);
-  // TODO: handle vectorize operation
-  if (Data.size() != 1)
-    return nullptr;
-  if (!spExpr->Read(m_pCpuCtxt, m_pMemCtxt, Data))
-    return nullptr;
-
-  auto Bit = spExpr->GetSizeInBit();
-
-  typename std::make_unsigned<_Type>::type
-    Value = std::get<1>(Data.front()).convert_to<_Type>(),
-    Result = 0;
-
-  switch (Op)
-  {
-  case OperationExpression::OpNot:
-    Result = ~Value;
-    break;
-
-  case OperationExpression::OpNeg:
-    Result = ~Value + 1;
-    break;
-
-  case OperationExpression::OpSwap:
-    Result = Value;
-    EndianSwap(Result);
-    break;
-
-  case OperationExpression::OpBsf:
-  {
-    Result = CountTrailingZero(Value);
-    if (Result == 32)
-      Result = 0;
-    break;
-  }
-
-  case OperationExpression::OpBsr:
-  {
-    Result = CountLeadingZero(Value);
-    if (Result == 32)
-      Result = 0;
-    break;
-  }
-
-  default:
-    return nullptr;
-  }
-
-  return Expr::MakeConst(Bit, Result);
-}
-
-template<typename _Type>
-Expression::SPType InterpreterEmulator::InterpreterExpressionVisitor::_DoBinaryOperation(u8 Op, Expression::SPType spLeftExpr, Expression::SPType spRightExpr)
-{
-  static_assert(std::is_signed<_Type>::value, "only signed value");
-
-  Expression::DataContainerType LeftData, RightData;
-
-  spRightExpr->Prepare(LeftData);
-  // TODO: handle vectorize operation
-  if (LeftData.size() != 1)
-    return nullptr;
-  if (!spLeftExpr->Read(m_pCpuCtxt, m_pMemCtxt, LeftData))
-    return nullptr;
-
-  spLeftExpr->Prepare(RightData);
-  // TODO: handle vectorize operation
-  if (RightData.size() != 1)
-    return nullptr;
-  if (!spRightExpr->Read(m_pCpuCtxt, m_pMemCtxt, RightData))
-    return nullptr;
-
-  auto Bit = std::max(spLeftExpr->GetSizeInBit(), spRightExpr->GetSizeInBit());
-
-  _Type
-    Left   = std::get<1>(LeftData.front()).convert_to<_Type>(),
-    Right  = std::get<1>(RightData.front()).convert_to<_Type>(),
-    Result = 0;
-
-  switch (Op)
-  {
-  case OperationExpression::OpAdd:
-    Result = Left + Right;
-    break;
-
-  case OperationExpression::OpSub:
-    Result = Left - Right;
-    break;
-
-  case OperationExpression::OpMul:
-    Result = Left * Right;
-    break;
-
-  case OperationExpression::OpUDiv:
-  case OperationExpression::OpSDiv:
-    if (Right == 0)
-      return nullptr;
-    Result = Left / Right;
-    break;
-
-  case OperationExpression::OpSMod:
-  case OperationExpression::OpUMod:
-    if (Right == 0)
-      return nullptr;
-    Result = Left % Right;
-    break;
-
-  case OperationExpression::OpAnd:
-    Result = Left & Right;
-    break;
-
-  case OperationExpression::OpOr:
-    Result = Left | Right;
-    break;
-
-  case OperationExpression::OpXor:
-    Result = Left ^ Right;
-    break;
-
-  case OperationExpression::OpLls:
-    Result = Left << Right;
-    break;
-
-  case OperationExpression::OpLrs:
-    Result = static_cast<typename std::make_unsigned<_Type>::type>(Left) >> Right;
-    break;
-
-  case OperationExpression::OpArs:
-    Result = Left >> Right;
-    break;
-
-  case OperationExpression::OpSext:
-    Log::Write("emul_interpreter") << "unhandled operation sign extend" << LogEnd;
-    return nullptr;
-
-  case OperationExpression::OpZext:
-    Log::Write("emul_interpreter") << "unhandled operation zero extend" << LogEnd;
-    return nullptr;
-
-  case OperationExpression::OpXchg:
-    Log::Write("emul_interpreter") << "unhandled operation exchange" << LogEnd;
-    break;
-
-  default:
-    Log::Write("emul_interpreter") << "unknown operation" << LogEnd;
-    return nullptr;
-  }
-
-  return Expr::MakeConst(Bit, Result);
 }

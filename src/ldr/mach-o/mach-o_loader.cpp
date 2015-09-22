@@ -9,11 +9,12 @@
 #define TEXT_SECTION "__TEXT,__text"
 
 MachOLoader::MachOLoader(void) :
+  m_HeaderOffset(0),
   m_Machine(0),
   m_Arch64(false),
   m_Endian(EndianUnknown),
   m_EntryPoint(0x0),
-  m_EntryPointType(ENTRYPOINT_NONE),
+  m_EntryPoBitVector(ENTRYPOINT_NONE),
   m_TextSectionVMAddr(0x0),
   m_SymbolsOffset(0x0),
   m_StringsOffset(0x0),
@@ -22,23 +23,46 @@ MachOLoader::MachOLoader(void) :
 {
 }
 
+// FIXME(KS): This code is not endian safe
 bool MachOLoader::IsCompatible(BinaryStream const& rBinStrm)
 {
+  m_HeaderOffset = 0;
   typedef MachOTraits<32> MachOType;
   MachOType::MachOHeader  Header;
 
-  if (!rBinStrm.Read(0x0, &Header, sizeof(Header))) {
+  if (!rBinStrm.Read(m_HeaderOffset, &Header, sizeof(Header))) {
     return false;
   }
 
-  if ( Header.magic == MH_MAGIC
-    || Header.magic == MH_MAGIC_64
-    || Header.magic == FAT_MAGIC) {
+  /* TODO : Support Fat binaries */
+  if (Header.magic == FAT_MAGIC || Header.magic == FAT_CIGAM) {
+
+    m_Endian = (Header.magic == FAT_MAGIC) ? BigEndian : LittleEndian;
+
+    // NumOfFatArch and FatArch structure are always in big endian
+    u32 NumOfFatArch = 0;
+    if (!rBinStrm.Read(0x4, NumOfFatArch))
+      return false;
+    EndianSwap(NumOfFatArch);
+    Log::Write("ldr_mach-o").Level(LogInfo) << "there's " << NumOfFatArch << " FAT entries" << LogEnd;
+    Log::Write("ldr_mach-o").Level(LogWarning) << "universal binary format is not completely supported, picking the first entry..." << LogEnd;
+
+    MachOType::FatArch FatArch;
+    if (!rBinStrm.Read(0x8, &FatArch, sizeof(FatArch)))
+      return false;
+    MachOType::EndianSwap(FatArch, BigEndian);
+    m_HeaderOffset = FatArch.offset;
+    if (!rBinStrm.Read(m_HeaderOffset, &Header, sizeof(Header)))
+      return false;
+
+  } else if ( Header.magic == MH_MAGIC
+    || Header.magic == MH_MAGIC_64) {
+
       m_Endian = LittleEndian;
 
   } else if (Header.magic == MH_CIGAM
-          || Header.magic == MH_CIGAM_64
-          || Header.magic == FAT_CIGAM) {
+          || Header.magic == MH_CIGAM_64) {
+
       m_Endian = BigEndian;
 
   } else {
@@ -46,11 +70,6 @@ bool MachOLoader::IsCompatible(BinaryStream const& rBinStrm)
   }
 
   MachOType::EndianSwap(Header, m_Endian);
-
-  /* TODO : Support Fat binaries */
-  if (Header.magic == FAT_MAGIC) {
-    return false;
-  }
 
   /* Avoid file types that have not been tested */
   if (Header.filetype != MH_EXECUTE) {
@@ -99,13 +118,13 @@ void MachOLoader::Map(Document& rDoc, Architecture::VSPType const& rArchs)
     return;
   }
 
-  if (!rBinStrm.Read(0x0, &Header, sizeof(Header))) {
+  if (!rBinStrm.Read(m_HeaderOffset, &Header, sizeof(Header))) {
     LOG_WR << "Cannot read mach-o header" << LogEnd;
     return;
   }
-  MachOType::EndianSwap(Header, m_Endian);
+  MachOType::EndianSwap(Header, m_Endian); // TODO(KS): understand which structures are big/little endian...
 
-  LoadCmdOff = sizeof(Header);
+  LoadCmdOff = m_HeaderOffset + sizeof(Header);
   for (u32 i = 0; i < Header.ncmds; i++) {
     typename MachOType::LoadCmd LoadCmd;
 
@@ -158,7 +177,7 @@ void MachOLoader::Map(Document& rDoc, Architecture::VSPType const& rArchs)
 
   /* We wait until here to add the start label because we might
   need fields from different load commands. */
-  if (m_EntryPointType == ENTRYPOINT_OFFSET) {
+  if (m_EntryPoBitVector == ENTRYPOINT_OFFSET) {
     if (m_TextSectionVMAddr) {
       m_EntryPoint = m_TextSectionVMAddr + m_EntryPoint;
     }
@@ -300,7 +319,7 @@ void MachOLoader::GetEntryPointV1(Document& rDoc, int LoadCmdOff)
       MachOType::EndianSwap(x86State, m_Endian);
 
       m_EntryPoint     = x86State.eip;
-      m_EntryPointType = ENTRYPOINT_VMADDR;
+      m_EntryPoBitVector = ENTRYPOINT_VMADDR;
     }
     break;
 
@@ -329,7 +348,7 @@ void MachOLoader::GetEntryPointV1(Document& rDoc, int LoadCmdOff)
       MachOType::EndianSwap(x86State, m_Endian);
 
       m_EntryPoint     = x86State.rip;
-      m_EntryPointType = ENTRYPOINT_VMADDR;
+      m_EntryPoBitVector = ENTRYPOINT_VMADDR;
     }
     break;
 
@@ -364,7 +383,7 @@ void MachOLoader::GetEntryPointV2(Document& rDoc, int LoadCmdOff)
   MachOType::EndianSwap(EntryPoint, m_Endian);
 
   m_EntryPoint     = EntryPoint.entryoff;
-  m_EntryPointType = ENTRYPOINT_OFFSET;
+  m_EntryPoBitVector = ENTRYPOINT_OFFSET;
 }
 
 template<int bit>

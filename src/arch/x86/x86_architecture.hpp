@@ -35,11 +35,13 @@ private:
   class X86CpuInformation : public CpuInformation
   {
   public:
+    X86CpuInformation(void) : CpuInformation(MEDUSA_ARCH_TAG('x', '8', '6')) {}
     virtual char const* ConvertIdentifierToName(u32 Id) const;
     virtual u32 ConvertNameToIdentifier(std::string const& rName) const;
     virtual u32 GetRegisterByType(CpuInformation::Type RegType, u8 Mode) const;
     virtual u32 GetSizeOfRegisterInBit(u32 Id) const;
     virtual bool IsRegisterAliased(u32 Id0, u32 Id1) const;
+    virtual bool NormalizeRegister(u32 Id, u8 Mode, u32& rExtId, u64& rMask) const;
   } m_CpuInfo;
 
   class X86CpuContext : public CpuContext
@@ -47,7 +49,7 @@ private:
   public:
     X86CpuContext(u8 Bits, CpuInformation const& rCpuInfo) : CpuContext(rCpuInfo), m_Bits(Bits) { memset(&m_Context, 0x0, sizeof(m_Context)); }
     virtual bool ReadRegister (u32 Reg, void*       pVal, u32 BitSize) const;
-    virtual bool WriteRegister(u32 Reg, void const* pVal, u32 BitSize, bool SignExtend = false);
+    virtual bool WriteRegister(u32 Reg, void const* pVal, u32 BitSize);
     virtual void* GetRegisterAddress(u32 Register);
     virtual void* GetContextAddress(void) { return &m_Context; }
     virtual u16 GetRegisterOffset(u32 Register);
@@ -55,6 +57,8 @@ private:
     virtual bool Translate(Address const& rLogicalAddress, u64& rLinearAddress) const;
     virtual u8 GetMode(void) const;
     virtual void SetMode(u8 Mode);
+    virtual bool GetAddress(AddressKind AddrKind, Address& rAddr) const;
+    virtual bool SetAddress(AddressKind AddrKind, Address const& rAddr);
     virtual std::string ToString(void) const;
 
   private:
@@ -72,6 +76,7 @@ private:
       u16 cs, ds, es, ss, fs, gs;
       // http://en.wikipedia.org/wiki/FLAGS_register
       bool CF, PF, AF, ZF, SF, TF, IF, DF, OF, IOPL, NT, RF, VM, AC, VIF, VIP, ID;
+      u128 xyzmm[32];
     } m_Context;
 
     u8 m_Bits;
@@ -107,11 +112,15 @@ public:
     Instruction   const& rInsn,
     PrintData          & rPrintData) const;
 
-  virtual CpuInformation const* GetCpuInformation(void) const { return &m_CpuInfo; }
-  virtual CpuContext*           MakeCpuContext(void) const { return new X86CpuContext(0, m_CpuInfo); }
-  virtual MemoryContext*        MakeMemoryContext(void) const { return new MemoryContext(m_CpuInfo); }
+  virtual CpuInformation    const* GetCpuInformation(void) const { return &m_CpuInfo; }
+  virtual CallingConvention const* GetCallingConvention(std::string const& rCallConvName, u8 Mode) const;
+  virtual std::vector<std::string> GetCallingConventionNames(void) const;
 
-  virtual bool                  HandleExpression(Expression::LSPType & rExprs, std::string const& rName, Instruction& rInsn, Expression::SPType spResExpr);
+  virtual CpuContext*    MakeCpuContext(void)    const { return new X86CpuContext(0, m_CpuInfo); }
+  virtual MemoryContext* MakeMemoryContext(void) const { return new MemoryContext(m_CpuInfo); }
+
+  virtual bool HandleExpression(Expression::LSPType & rExprs, std::string const& rName, Instruction& rInsn, Expression::SPType spResExpr);
+  virtual bool EmitSetExecutionAddress(Expression::VSPType& rExprs, Address const& rAddr, u8 Mode);
 
 private:
 #include "x86_operand.ipp"
@@ -183,11 +192,13 @@ private:
 
   Expression::SPType __Decode_Uo(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, u8 Mode);
   Expression::SPType __Decode_Uod(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, u8 Mode);
+  Expression::SPType __Decode_Uoq(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, u8 Mode);
   Expression::SPType __Decode_Uq(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, u8 Mode);
   Expression::SPType __Decode_Ux(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, u8 Mode);
 
   Expression::SPType __Decode_Vo(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, u8 Mode);
   Expression::SPType __Decode_Vod(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, u8 Mode);
+  Expression::SPType __Decode_Voq(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, u8 Mode);
   Expression::SPType __Decode_Vx(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, u8 Mode);
   Expression::SPType __Decode_Vy(BinaryStream const& rBinStrm, TOffset Offset, Instruction& rInsn, u8 Mode);
 

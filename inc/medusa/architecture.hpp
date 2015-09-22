@@ -10,6 +10,7 @@
 #include "medusa/address.hpp"
 #include "medusa/binary_stream.hpp"
 #include "medusa/context.hpp"
+#include "medusa/calling_convention.hpp"
 #include "medusa/expression.hpp"
 
 #include "medusa/character.hpp"
@@ -37,10 +38,10 @@ class Medusa_EXPORT Architecture : public IsConfigurable
 {
 public:
   typedef std::shared_ptr<Architecture> SPType;
-  typedef std::vector<SPType>          VSPType;
-  typedef std::map<Tag, SPType>        TagMap;
-  typedef std::tuple<const char*, u8>     NamedMode;
-  typedef std::vector<NamedMode>          NamedModeVector;
+  typedef std::vector<SPType>           VSPType;
+  typedef std::map<Tag, SPType>         TagMap;
+  typedef std::tuple<const char*, u8>   NamedMode;
+  typedef std::vector<NamedMode>        NamedModeVector;
 
   Architecture(Tag ArchTag);
 
@@ -66,11 +67,16 @@ public:
   //! This method returns the architecture endianness.
   virtual EEndianness GetEndianness(void) = 0;
 
-  virtual CpuInformation const* GetCpuInformation(void) const = 0;
-  virtual CpuContext*           MakeCpuContext(void)    const = 0;
-  virtual MemoryContext*        MakeMemoryContext(void) const = 0;
+  virtual CpuInformation    const* GetCpuInformation(void) const { return nullptr; }
+  virtual CallingConvention const* GetCallingConvention(std::string const& rCallConvName, u8 Mode) const { return nullptr; }
+  virtual std::vector<std::string> GetCallingConventionNames(void) const { return{}; }
 
-  virtual bool HandleExpression(Expression::LSPType& rExprs, std::string const& rName, Instruction& rInsn, Expression::SPType spResExpr) { return true; }
+  virtual CpuContext*    MakeCpuContext(void)    const { return nullptr; }
+  virtual MemoryContext* MakeMemoryContext(void) const { return nullptr; }
+
+
+  virtual bool HandleExpression(Expression::LSPType& rExprs, std::string const& rName, Instruction& rInsn, Expression::SPType spResExpr);
+  virtual bool EmitSetExecutionAddress(Expression::VSPType& rExprs, Address const& rAddr, u8 Mode);
 
   void UpdateId(u8 Id) { m_Tag |= Id; }
   Tag  GetTag(void) const { return m_Tag; }

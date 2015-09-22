@@ -31,6 +31,16 @@ bool Architecture::Disassemble(BinaryStream const& rBinStrm, TOffset Offset, Ins
   return false;
 };
 
+bool Architecture::HandleExpression(Expression::LSPType& rExprs, std::string const& rName, Instruction& rInsn, Expression::SPType spResExpr)
+{
+  return true;
+}
+
+bool Architecture::EmitSetExecutionAddress(Expression::VSPType& rExprs, Address const& rAddr, u8 Mode)
+{
+  return false;
+}
+
 u8 Architecture::GetModeByName(std::string const& rModeName) const
 {
   auto const& rModes = GetModes();
@@ -224,9 +234,9 @@ public:
     spBinOpExpr->GetRightExpression()->Visit(this);
     return nullptr;
   }
-  virtual Expression::SPType VisitConstant(ConstantExpression::SPType spConstExpr)
+  virtual Expression::SPType VisitBitVector(BitVectorExpression::SPType spConstExpr)
   {
-    Address const OprdAddr(spConstExpr->GetConstant());
+    Address const OprdAddr(spConstExpr->GetInt().ConvertTo<TOffset>());
     auto OprdLbl = m_rDoc.GetLabelFromAddress(OprdAddr);
     if (OprdLbl.GetType() != Label::Unknown)
     {
@@ -234,7 +244,7 @@ public:
       return nullptr;
     }
 
-    m_rPrintData.AppendImmediate(spConstExpr->GetConstant(), spConstExpr->GetSizeInBit());
+    m_rPrintData.AppendImmediate(spConstExpr->GetInt(), 16);
     return nullptr;
   }
 
@@ -439,7 +449,7 @@ bool Architecture::FormatValue(
   if (rDoc.RetrieveDetailId(rAddr, 0, BindId))
     rDoc.GetValueDetail(BindId, ValDtl);
 
-  return FormatValueDetail(rDoc, rAddr, rVal.GetLength() * 8, ValDtl, rPrintData);
+  return FormatValueDetail(rDoc, rAddr, static_cast<u8>(rVal.GetLength() * 8), ValDtl, rPrintData);
 }
 
 bool Architecture::FormatMultiCell(

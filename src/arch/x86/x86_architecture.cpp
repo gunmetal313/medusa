@@ -1,4 +1,5 @@
 #include "x86_architecture.hpp"
+#include "x86_calling_convention.hpp"
 
 X86Architecture::X86Architecture(void)
   : Architecture(MEDUSA_ARCH_TAG('x','8','6'))
@@ -147,9 +148,20 @@ u32 X86Architecture::X86CpuInformation::ConvertNameToIdentifier(std::string cons
 
 u32 X86Architecture::X86CpuInformation::GetRegisterByType(CpuInformation::Type RegType, u8 Mode) const
 {
-  static const u32 Register16[] = { X86_Reg_Sp,  X86_Reg_Bp,  X86_Reg_Cs, X86_Reg_Ip,  X86_Reg_Ax,  X86_Reg_Cx  };
-  static const u32 Register32[] = { X86_Reg_Esp, X86_Reg_Ebp, X86_Reg_Cs, X86_Reg_Eip, X86_Reg_Eax, X86_Reg_Ecx };
-  static const u32 Register64[] = { X86_Reg_Rsp, X86_Reg_Rbp, X86_Reg_Cs, X86_Reg_Rip, X86_Reg_Rax, X86_Reg_Rcx };
+  /*
+    StackPointerRegister,
+    StackFrameRegister,
+    ProgramBaseRegister,
+    ProgramPointerRegister,
+    AccumulatorRegister,
+    CounterRegister,
+    DivisorRegister,
+    RemainderRegister,
+    InvalidRegister
+    */
+  static const u32 Register16[] = { X86_Reg_Sp,  X86_Reg_Bp,  X86_Reg_Cs, X86_Reg_Ip,  X86_Reg_Ax,  X86_Reg_Cx,  0, X86_Reg_Ah  };
+  static const u32 Register32[] = { X86_Reg_Esp, X86_Reg_Ebp, X86_Reg_Cs, X86_Reg_Eip, X86_Reg_Eax, X86_Reg_Ecx, 0, X86_Reg_Edx };
+  static const u32 Register64[] = { X86_Reg_Rsp, X86_Reg_Rbp, X86_Reg_Cs, X86_Reg_Rip, X86_Reg_Rax, X86_Reg_Rcx, 0, X86_Reg_Rdx };
 
   if (RegType < InvalidRegister)
     switch (Mode)
@@ -189,7 +201,7 @@ u32 X86Architecture::X86CpuInformation::GetSizeOfRegisterInBit(u32 Id) const
   case X86_Reg_Cs:    case X86_Reg_Ds:    case X86_Reg_Es:    case X86_Reg_Ss:
   case X86_Reg_Fs:    case X86_Reg_Gs:
     return 16;
- 
+
   case X86_Reg_Eax:   case X86_Reg_Ebx:   case X86_Reg_Ecx:   case X86_Reg_Edx:
   case X86_Reg_Esp:   case X86_Reg_Ebp:   case X86_Reg_Esi:   case X86_Reg_Edi:
   case X86_Reg_R8d:   case X86_Reg_R9d:   case X86_Reg_R10d:  case X86_Reg_R11d:
@@ -269,240 +281,156 @@ bool X86Architecture::X86CpuInformation::IsRegisterAliased(u32 Id0, u32 Id1) con
   return false;
 }
 
+bool X86Architecture::X86CpuInformation::NormalizeRegister(u32 Id, u8 Mode, u32& rExtId, u64& rMask) const
+{
+  auto CurRegSize = GetSizeOfRegisterInBit(Id);
+  if (CurRegSize == 0)
+    return false;
+
+  // KS: Flag registers are already normalized since they can't be extended.
+  if (CurRegSize == 1)
+    return false;
+  // KS: We ignore segment registers
+  switch (Id)
+  {
+  case X86_Reg_Cs: case X86_Reg_Ds: case X86_Reg_Es: case X86_Reg_Ss: case X86_Reg_Fs: case X86_Reg_Gs:
+    return false;
+  }
+  // KS: For now, we assume that SIMD registers can't be normalized (which is false).
+  if (CurRegSize > 64)
+    return false;
+
+
+  switch (Mode)
+  {
+    // KS: This case is tedious because X86_Bit_16 could actually allow 32-bit register using the op_size prefix.
+    // The question is: wouldn't be better to assume that this mode uses 32-bit by default?
+  case X86_Bit_16:
+  case X86_Bit_32:
+  {
+    if (CurRegSize > 32)
+      return false;
+    if (CurRegSize == 32)
+      return false;
+
+    break;
+  }
+
+  case X86_Bit_64:
+  {
+    if (CurRegSize == 64)
+      return false;
+
+    break;
+  }
+
+  default:
+    return false;
+  }
+
+  switch (Id)
+  {
+  case X86_Reg_Al: case X86_Reg_Ah: case X86_Reg_Ax:   case X86_Reg_Eax:  rExtId = (Mode == X86_Bit_64) ? X86_Reg_Rax : X86_Reg_Eax;  break;
+  case X86_Reg_Bl: case X86_Reg_Bh: case X86_Reg_Bx:   case X86_Reg_Ebx:  rExtId = (Mode == X86_Bit_64) ? X86_Reg_Rbx : X86_Reg_Ebx;  break;
+  case X86_Reg_Cl: case X86_Reg_Ch: case X86_Reg_Cx:   case X86_Reg_Ecx:  rExtId = (Mode == X86_Bit_64) ? X86_Reg_Rcx : X86_Reg_Ecx;  break;
+  case X86_Reg_Dl: case X86_Reg_Dh: case X86_Reg_Dx:   case X86_Reg_Edx:  rExtId = (Mode == X86_Bit_64) ? X86_Reg_Rdx : X86_Reg_Edx;  break;
+  case X86_Reg_Sil:                 case X86_Reg_Si:   case X86_Reg_Esi:  rExtId = (Mode == X86_Bit_64) ? X86_Reg_Rsi : X86_Reg_Esi;  break;
+  case X86_Reg_Dil:                 case X86_Reg_Di:   case X86_Reg_Edi:  rExtId = (Mode == X86_Bit_64) ? X86_Reg_Rdi : X86_Reg_Edi;  break;
+  case X86_Reg_Spl:                 case X86_Reg_Sp:   case X86_Reg_Esp:  rExtId = (Mode == X86_Bit_64) ? X86_Reg_Rsp : X86_Reg_Esp;  break;
+  case X86_Reg_Bpl:                 case X86_Reg_Bp:   case X86_Reg_Ebp:  rExtId = (Mode == X86_Bit_64) ? X86_Reg_Rbp : X86_Reg_Ebp;  break;
+  case X86_Reg_R8b:                 case X86_Reg_R8w:  case X86_Reg_R8d:  rExtId = (Mode == X86_Bit_64) ? X86_Reg_R8  : X86_Reg_R8d;  break;
+  case X86_Reg_R9b:                 case X86_Reg_R9w:  case X86_Reg_R9d:  rExtId = (Mode == X86_Bit_64) ? X86_Reg_R9  : X86_Reg_R9d;  break;
+  case X86_Reg_R10b:                case X86_Reg_R10w: case X86_Reg_R10d: rExtId = (Mode == X86_Bit_64) ? X86_Reg_R10 : X86_Reg_R10d; break;
+  case X86_Reg_R11b:                case X86_Reg_R11w: case X86_Reg_R11d: rExtId = (Mode == X86_Bit_64) ? X86_Reg_R11 : X86_Reg_R11d; break;
+  case X86_Reg_R12b:                case X86_Reg_R12w: case X86_Reg_R12d: rExtId = (Mode == X86_Bit_64) ? X86_Reg_R12 : X86_Reg_R12d; break;
+  case X86_Reg_R13b:                case X86_Reg_R13w: case X86_Reg_R13d: rExtId = (Mode == X86_Bit_64) ? X86_Reg_R13 : X86_Reg_R13d; break;
+  case X86_Reg_R14b:                case X86_Reg_R14w: case X86_Reg_R14d: rExtId = (Mode == X86_Bit_64) ? X86_Reg_R14 : X86_Reg_R14d; break;
+  case X86_Reg_R15b:                case X86_Reg_R15w: case X86_Reg_R15d: rExtId = (Mode == X86_Bit_64) ? X86_Reg_R15 : X86_Reg_R15d; break;
+  }
+
+  switch (Id)
+  {
+  case X86_Reg_Ah: case X86_Reg_Bh: case X86_Reg_Ch: case X86_Reg_Dh: rMask = 0x000000000000ff00ULL; break;
+  default: rMask = (1ULL << CurRegSize) - 1; break;
+  }
+
+  // In AMD64, if a reg32 is written, it clears the 32-bit MSB of the corresponding register.
+  if (Mode == X86_Bit_64 && CurRegSize == 32)
+    rMask = 0xffffffffffffffffULL;
+
+  return true;
+}
+
+// src: https://en.wikipedia.org/wiki/X86_calling_conventions
+CallingConvention const* X86Architecture::GetCallingConvention(std::string const& rCallConvName, u8 Mode) const
+{
+  if (rCallConvName == "cdecl")
+  {
+
+    static CdeclCallingConvention s_CdeclCallConv16(static_cast<u8>(X86_Bit_16), m_CpuInfo);
+    static CdeclCallingConvention s_CdeclCallConv32(static_cast<u8>(X86_Bit_32), m_CpuInfo);
+    switch (Mode)
+    {
+    case X86_Bit_16: return &s_CdeclCallConv16;
+    case X86_Bit_32: return &s_CdeclCallConv32;
+    default: return nullptr;
+    }
+  }
+
+  if (rCallConvName == "stdcall")
+  {
+
+    static StdCallCallingConvention s_StdCallCallConv16(static_cast<u8>(X86_Bit_16), m_CpuInfo);
+    static StdCallCallingConvention s_StdCallCallConv32(static_cast<u8>(X86_Bit_32), m_CpuInfo);
+    switch (Mode)
+    {
+    case X86_Bit_16: return &s_StdCallCallConv16;
+    case X86_Bit_32: return &s_StdCallCallConv32;
+    default: return nullptr;
+    }
+  }
+
+  if (rCallConvName == "ms_x64")
+  {
+    if (Mode != X86_Bit_64)
+      return nullptr;
+
+    static MsX64CallingConvention s_MsX64CallConv(m_CpuInfo);
+    return &s_MsX64CallConv;
+  }
+
+  if (rCallConvName == "system_v")
+  {
+    if (Mode != X86_Bit_64)
+      return nullptr;
+
+    static SystemVCallingConvention s_SystemVCallConv(m_CpuInfo);
+    return &s_SystemVCallConv;
+  }
+
+  return nullptr;
+}
+
+std::vector<std::string> X86Architecture::GetCallingConventionNames(void) const
+{
+  return{ "cdecl", "stdcall", "ms_x64", "system_v" };
+}
+
 bool X86Architecture::HandleExpression(Expression::LSPType & rExprs, std::string const& rName, Instruction& rInsn, Expression::SPType spResExpr)
 {
-  // TODO: use unordered_map
-  // TODO: base code on https://github.com/qemu/qemu/blob/f368c33d5ab09dd5656924185cd975b11838cd25/target-i386/cc_helper_template.h
+  return false;
+}
 
-  if (rName == "begin_update_flags")
-  {
-
-  }
-
-  else if (rName == "end_update_flags")
-  {
-    if (rInsn.GetNumberOfOperand() == 0)
-      return false;
-
-    if (spResExpr == nullptr)
-      return false;
-
-    u32 Bit = rInsn.GetOperand(0)->GetSizeInBit();
-    if (Bit == 0)
-      return false;
-    auto InsnLen = static_cast<u8>(rInsn.GetLength());
-    if (InsnLen == 0)
-      return false;
-
-    auto UpdatedFlags = rInsn.GetUpdatedFlags();
-
-    if (UpdatedFlags & X86_FlZf)
-    {
-      // zf = op0 == 0 ? true : false
-      rExprs.push_back(Expr::MakeAssign(
-        Expr::MakeId(X86_FlZf, &m_CpuInfo),
-        Expr::MakeTernaryCond(ConditionExpression::CondEq,
-        /**/spResExpr->Clone(),
-        /**/Expr::MakeConst(Bit, 0x0),
-        /**/Expr::MakeBoolean(true), Expr::MakeBoolean(false))));
-    }
-
-    if (UpdatedFlags & X86_FlSf)
-    {
-      // sf = (op0 & (1 << (op0.bit - 1)) == (1 << (op0.bit - 1)) ? true : false
-      rExprs.push_back(Expr::MakeAssign(
-        Expr::MakeId(X86_FlSf, &m_CpuInfo),
-        Expr::MakeTernaryCond(ConditionExpression::CondEq,
-        /**/Expr::MakeBinOp(OperationExpression::OpAnd,
-        /****/spResExpr->Clone(),
-        /****/Expr::MakeConst(Bit, 1ULL << (Bit - 1))),
-        /**/Expr::MakeConst(Bit, 1ULL << (Bit - 1)),
-        /**/Expr::MakeBoolean(true), Expr::MakeBoolean(false))));
-    }
-
-    if (UpdatedFlags & X86_FlPf)
-    {
-      auto MaskLsb = [](Expression::SPType spExpr) -> Expression::SPType
-      {
-        return Expr::MakeBinOp(OperationExpression::OpAnd, spExpr, Expr::MakeConst(spExpr->GetSizeInBit(), 1));
-      };
-
-      auto spBit0 = MaskLsb(Expr::MakeBinOp(OperationExpression::OpLrs, spResExpr, Expr::MakeConst(spResExpr->GetSizeInBit(), 0)));
-      auto spBit1 = MaskLsb(Expr::MakeBinOp(OperationExpression::OpLrs, spResExpr, Expr::MakeConst(spResExpr->GetSizeInBit(), 1)));
-      auto spBit2 = MaskLsb(Expr::MakeBinOp(OperationExpression::OpLrs, spResExpr, Expr::MakeConst(spResExpr->GetSizeInBit(), 2)));
-      auto spBit3 = MaskLsb(Expr::MakeBinOp(OperationExpression::OpLrs, spResExpr, Expr::MakeConst(spResExpr->GetSizeInBit(), 3)));
-      auto spBit4 = MaskLsb(Expr::MakeBinOp(OperationExpression::OpLrs, spResExpr, Expr::MakeConst(spResExpr->GetSizeInBit(), 4)));
-      auto spBit5 = MaskLsb(Expr::MakeBinOp(OperationExpression::OpLrs, spResExpr, Expr::MakeConst(spResExpr->GetSizeInBit(), 5)));
-      auto spBit6 = MaskLsb(Expr::MakeBinOp(OperationExpression::OpLrs, spResExpr, Expr::MakeConst(spResExpr->GetSizeInBit(), 6)));
-      auto spBit7 = MaskLsb(Expr::MakeBinOp(OperationExpression::OpLrs, spResExpr, Expr::MakeConst(spResExpr->GetSizeInBit(), 7)));
-
-      auto spPart0 = Expr::MakeBinOp(OperationExpression::OpXor, spBit0, spBit1);
-      auto spPart1 = Expr::MakeBinOp(OperationExpression::OpXor, spBit2, spBit3);
-      auto spPart2 = Expr::MakeBinOp(OperationExpression::OpXor, spBit4, spBit5);
-      auto spPart3 = Expr::MakeBinOp(OperationExpression::OpXor, spBit6, spBit7);
-
-      auto spPart4 = Expr::MakeBinOp(OperationExpression::OpXor, spPart0, spPart1);
-      auto spPart5 = Expr::MakeBinOp(OperationExpression::OpXor, spPart2, spPart3);
-
-      auto spPart6 = Expr::MakeBinOp(OperationExpression::OpXor, spPart4, spPart5);
-
-      auto spCond = Expr::MakeTernaryCond(ConditionExpression::CondEq, spPart6, Expr::MakeConst(spResExpr->GetSizeInBit(), 0), Expr::MakeBoolean(true), Expr::MakeBoolean(false));
-      rExprs.push_back(Expr::MakeAssign(Expr::MakeId(X86_FlPf, &m_CpuInfo), spCond));
-    }
-
-    if (UpdatedFlags & X86_FlAf)
-    {
-      // TODO:
-    }
-
-    switch (rInsn.GetOpcode())
-    {
-    case X86_Opcode_Inc:
-      break;
-
-    case X86_Opcode_Add: case X86_Opcode_Xadd:
-      if (spResExpr == nullptr)
-        return false;
-
-      // cf = (res < op0) ? true : false (unsigned)
-      rExprs.push_back(Expr::MakeAssign(
-        Expr::MakeId(X86_FlCf, &m_CpuInfo),
-        Expr::MakeTernaryCond(ConditionExpression::CondUlt,
-        /**/spResExpr->Clone(),
-        /**/rInsn.GetOperand(0),
-        /**/Expr::MakeBoolean(true), Expr::MakeBoolean(false))));
-
-      {
-        // of = ((op0 ^ res) & (~(op0 ^ op1))) & (int(op0.bit, 1 << (op0.bit - 1))
-        auto spXor0 = Expr::MakeBinOp(OperationExpression::OpXor, rInsn.GetOperand(0), spResExpr);
-        auto spXor1 = Expr::MakeBinOp(OperationExpression::OpXor, rInsn.GetOperand(0), rInsn.GetOperand(1));
-        auto spNot = Expr::MakeUnOp(OperationExpression::OpNot, spXor1);
-        auto spAnd = Expr::MakeBinOp(OperationExpression::OpAnd, spXor0, spNot);
-        auto spMsb = Expr::MakeConst(rInsn.GetOperand(0)->GetSizeInBit(), 1 << (rInsn.GetOperand(0)->GetSizeInBit() - 1));
-        auto spMask = Expr::MakeBinOp(OperationExpression::OpAnd, spAnd, spMsb);
-        auto spCheckOf = Expr::MakeTernaryCond(ConditionExpression::CondEq, spMask, spMsb, Expr::MakeBoolean(true), Expr::MakeBoolean(false));
-        rExprs.push_back(Expr::MakeAssign(Expr::MakeId(X86_FlOf, &m_CpuInfo), spCheckOf));
-      }
-      break;
-
-    case X86_Opcode_Adc:
-      if (spResExpr == nullptr)
-        return false;
-
-      // cf = (res < op0) ? true : false (unsigned) (cf is already included in res)
-      rExprs.push_back(Expr::MakeAssign(
-        Expr::MakeId(X86_FlCf, &m_CpuInfo),
-        Expr::MakeTernaryCond(ConditionExpression::CondUlt,
-        /**/spResExpr->Clone(),
-        /**/rInsn.GetOperand(0),
-        /**/Expr::MakeBoolean(true), Expr::MakeBoolean(false))));
-
-      // of = (((op0 ^ op1) ^ res) ^ ((op0 ^ res) & (op0 ^ op1))) & int(op0.bit, 1 << (op0.bit - 1))
-      rExprs.push_back(Expr::MakeTernaryCond(ConditionExpression::CondNe,
-        Expr::MakeBinOp(OperationExpression::OpAnd,
-        /**/Expr::MakeBinOp(OperationExpression::OpAnd,
-        /****/Expr::MakeBinOp(OperationExpression::OpXor, rInsn.GetOperand(0), spResExpr),
-        /****/Expr::MakeUnOp(OperationExpression::OpNot,
-        /******/Expr::MakeBinOp(OperationExpression::OpXor, rInsn.GetOperand(0), rInsn.GetOperand(1)))),
-        /**/Expr::MakeConst(rInsn.GetOperand(0)->GetSizeInBit(), 1 << (rInsn.GetOperand(0)->GetSizeInBit() - 1))),
-        Expr::MakeConst(rInsn.GetOperand(0)->GetSizeInBit(), 1 << (rInsn.GetOperand(0)->GetSizeInBit() - 1)),
-        Expr::MakeBoolean(false), Expr::MakeBoolean(true)));
-
-
-      // of = (res < op0) ? true : false (signed) (cf is already included in res)
-      rExprs.push_back(Expr::MakeAssign(
-        Expr::MakeId(X86_FlOf, &m_CpuInfo),
-        Expr::MakeTernaryCond(ConditionExpression::CondSlt,
-        /**/spResExpr->Clone(),
-        /**/rInsn.GetOperand(0),
-        /**/Expr::MakeBoolean(true), Expr::MakeBoolean(false))));
-      break;
-
-    case X86_Opcode_Dec:
-      break;
-
-    case X86_Opcode_Sub: case X86_Opcode_Cmp:
-      if (spResExpr == nullptr)
-        return false;
-
-      // cf = (op0 < op1) ? true : false (unsigned)
-      rExprs.push_back(Expr::MakeAssign(
-        Expr::MakeId(X86_FlCf, &m_CpuInfo),
-        Expr::MakeTernaryCond(ConditionExpression::CondUlt,
-        /**/rInsn.GetOperand(0),
-        /**/rInsn.GetOperand(1),
-        /**/Expr::MakeBoolean(true), Expr::MakeBoolean(false))));
-
-      // of = (op0 < op1) ? true : false (signed)
-      rExprs.push_back(Expr::MakeAssign(
-        Expr::MakeId(X86_FlOf, &m_CpuInfo),
-        Expr::MakeTernaryCond(ConditionExpression::CondSlt,
-        /**/rInsn.GetOperand(0),
-        /**/rInsn.GetOperand(1),
-        /**/Expr::MakeBoolean(true), Expr::MakeBoolean(false))));
-      break;
-
-    case X86_Opcode_Sbb:
-      if (spResExpr == nullptr)
-        return false;
-
-      // FIXME(KS): cf is modified before the actual operation
-      // cf = (op0 < op1) ? true : false (unsigned) (-cf is already included)
-      rExprs.push_back(Expr::MakeAssign(
-        Expr::MakeId(X86_FlCf, &m_CpuInfo),
-        Expr::MakeTernaryCond(ConditionExpression::CondUlt,
-        /**/rInsn.GetOperand(0),
-        /**/rInsn.GetOperand(1),
-        /**/Expr::MakeBoolean(true), Expr::MakeBoolean(false))));
-
-      // of = (op0 < op1) ? true : false (signed) (-cf is already included)
-      rExprs.push_back(Expr::MakeAssign(
-        Expr::MakeId(X86_FlOf, &m_CpuInfo),
-        Expr::MakeTernaryCond(ConditionExpression::CondSlt,
-        /**/rInsn.GetOperand(0),
-        /**/rInsn.GetOperand(1),
-        /**/Expr::MakeBoolean(true), Expr::MakeBoolean(false))));
-      break;
-
-    // TODO: handle of
-    case X86_Opcode_Rol:
-    {
-      if (spResExpr == nullptr)
-        return false;
-
-      auto spLsb = Expr::MakeBinOp(OperationExpression::OpAnd, spResExpr, Expr::MakeConst(Bit, 1));
-
-      // cf = lsb(res)
-      rExprs.push_back(Expr::MakeAssign(
-        Expr::MakeId(X86_FlCf, &m_CpuInfo),
-        Expr::MakeTernaryCond(ConditionExpression::CondEq,
-        spLsb, Expr::MakeConst(Bit, 1),
-        Expr::MakeBoolean(true), Expr::MakeBoolean(false))));
-      break;
-    }
-
-    case X86_Opcode_Ror:
-    {
-      if (spResExpr == nullptr)
-        return false;
-
-      auto spMsb = Expr::MakeBinOp(OperationExpression::OpAnd, spResExpr, Expr::MakeConst(Bit, 1 << (Bit - 1)));
-
-      // cf = msb(res)
-      rExprs.push_back(Expr::MakeAssign(
-        Expr::MakeId(X86_FlCf, &m_CpuInfo),
-        Expr::MakeTernaryCond(ConditionExpression::CondEq,
-        spMsb, Expr::MakeConst(Bit, 1 << (Bit - 1)),
-        Expr::MakeBoolean(true), Expr::MakeBoolean(false))));
-      break;
-    }
-
-    default:
-      return false;
-    }
-
-  }
-
+// TODO: handle base address
+bool X86Architecture::EmitSetExecutionAddress(Expression::VSPType& rExprs, Address const& rAddr, u8 Mode)
+{
+  u32 Id = m_CpuInfo.GetRegisterByType(CpuInformation::ProgramPointerRegister, Mode);
+  if (Id == 0)
+    return false;
+  u32 IdSz = m_CpuInfo.GetSizeOfRegisterInBit(Id);
+  if (IdSz == 0)
+    return false;
+  rExprs.push_back(Expr::MakeAssign(Expr::MakeId(Id, &m_CpuInfo), Expr::MakeBitVector(IdSz, rAddr.GetOffset())));
   return true;
 }
 

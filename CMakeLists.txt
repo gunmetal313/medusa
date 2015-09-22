@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8.10)
+cmake_minimum_required(VERSION 3.1)
 
 # project name
 project(Medusa)
@@ -9,7 +9,7 @@ set(VERSION_MINOR 4)
 set(VERSION_PATCH 4)
 
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
-include(cotire) # https://github.com/sakra/cotire
+#include(cotire) # https://github.com/sakra/cotire
 
 enable_testing()
 
@@ -32,28 +32,61 @@ if (MSVC)
   message(STATUS "MS Visual Studio generator detected, define _WIN32_WINNT=${WIN_VER}")
 endif()
 
-# TODO: change version.hpp destination (CMAKE_BINARY_DIR)
-configure_file(
-  ${CMAKE_SOURCE_DIR}/inc/medusa/version.hpp.in
-  ${CMAKE_SOURCE_DIR}/inc/medusa/version.hpp
-)
-
 #set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 
-if (NOT EXISTS "${CMAKE_SOURCE_DIR}/deps/ogdf/")
-  message(FATAL_ERROR "OGDF folder is missing, please run git submodule update --init --recursive")
-endif()
-add_subdirectory("${CMAKE_SOURCE_DIR}/deps/ogdf")
-include_directories("${CMAKE_SOURCE_DIR}/deps/ogdf/include")
-set_target_properties(coin PROPERTIES FOLDER "Dependencies")
-set_target_properties(ogdf PROPERTIES FOLDER "Dependencies")
-set_target_properties(ogdf-test PROPERTIES FOLDER "Dependencies")
+# features
 
-# We need boost
+## C++
+set(CMAKE_CXX_STANDARD 11)
+include(CheckCXXCompilerFlag)
+CHECK_CXX_COMPILER_FLAG(-fabi-version=6 HAVE_ABI_VERSION)
+if (HAVE_ABI_VERSION)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fabi-version=6")
+endif()
+
+## Python
+set(MEDUSA_PYTHON_VERSION 2.7)
+
+## Boost
+set(MEDUSA_BOOST_MIN_VERSION 1.55)
+
 set(Boost_USE_STATIC_LIBS OFF) # We want to link boost dynamically
 add_definitions(-DBOOST_ALL_DYN_LINK)
-find_package(Boost 1.55 COMPONENTS system filesystem thread date_time program_options unit_test_framework REQUIRED)
+find_package(Boost ${MEDUSA_BOOST_MIN_VERSION} COMPONENTS system filesystem thread date_time program_options unit_test_framework REQUIRED)
 
+## OGDF
+option(MEDUSA_BUILD_WITH_OGDF
+  "OGDF library allows medusa to display graph"
+  FALSE)
+
+if (MEDUSA_BUILD_WITH_OGDF)
+  message("Build medusa with OGDF")
+
+  if (NOT EXISTS "${CMAKE_SOURCE_DIR}/deps/ogdf")
+    find_package(Git)
+    if (NOT GIT_FOUND)
+      message(FATAL_ERROR "Unable to find Git executable")
+    endif()
+
+  execute_process(
+    COMMAND "${GIT_EXECUTABLE}" clone https://github.com/wisk/ogdf
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/deps")
+  endif()
+
+  if (NOT EXISTS "${CMAKE_SOURCE_DIR}/deps/ogdf/")
+    message(FATAL_ERROR "OGDF folder is missing")
+  endif()
+  add_subdirectory("${CMAKE_SOURCE_DIR}/deps/ogdf")
+  include_directories("${CMAKE_SOURCE_DIR}/deps/ogdf/include")
+  set_target_properties(coin PROPERTIES FOLDER "Dependencies")
+  set_target_properties(ogdf PROPERTIES FOLDER "Dependencies")
+  set_target_properties(ogdf-test PROPERTIES FOLDER "Dependencies")
+
+  set(MEDUSA_HAS_OGDF "#define MEDUSA_HAS_OGDF")
+
+endif()
+
+# all generated files are going to bin folder
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -61,21 +94,13 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # add include directory
 include_directories(
   ${CMAKE_SOURCE_DIR}/inc
+  ${CMAKE_BINARY_DIR}/inc
   ${Boost_INCLUDE_DIRS}
   )
 
 link_directories(
   ${Boost_LIBRARY_DIRS}
   )
-
-# Found it in CMakeLists.txt from keepassx project
-if("${CMAKE_CXX_COMPILER}" MATCHES "clang(\\+\\+)?$" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
-  set(CMAKE_COMPILER_IS_CLANGXX 1)
-endif()
-
-if (CMAKE_COMPILER_IS_GNUCXX OR CMAKE_COMPILER_IS_CLANGXX)
-  add_definitions("-std=c++11" "-fabi-version=6")
-endif()
 
 # src: ogdf cmake
 if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
@@ -111,3 +136,8 @@ if (DOXYGEN_FOUND)
     COMMENT "Generating API documentation with doxygen" VERBATIM
     )
 endif()
+
+configure_file(
+  ${CMAKE_SOURCE_DIR}/inc/medusa/version.hpp.in
+  ${CMAKE_BINARY_DIR}/inc/medusa/version.hpp
+)

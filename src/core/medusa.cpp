@@ -60,7 +60,8 @@ bool Medusa::Start(
   Database::SPType spDatabase,
   Loader::SPType spLoader,
   Architecture::VSPType spArchitectures,
-  OperatingSystem::SPType spOperatingSystem)
+  OperatingSystem::SPType spOperatingSystem,
+  bool StartAnalyzer)
 {
   if (spArchitectures.empty())
     return false;
@@ -91,14 +92,17 @@ bool Medusa::Start(
     spOperatingSystem->ProvideDetails(m_Document);
   }
 
+  if (!StartAnalyzer)
+    return true;
+
   /* Disassemble the file with the default analyzer */
-  AddTask(m_Analyzer.CreateDisassembleAllFunctionsTask(m_Document));
+  AddTask(m_Analyzer.CreateTask("disassemble all functions", m_Document));
 
   /* Analyze the stack for each functions */
-  AddTask(m_Analyzer.CreateAnalyzeStackAllFunctionsTask(m_Document));
+  //AddTask(m_Analyzer.CreateAnalyzeStackAllFunctionsTask(m_Document));
 
-  ///* Find all strings using the previous analyze */
-  AddTask(m_Analyzer.CreateFindAllStringTask(m_Document));
+  /* Find all strings using the previous analyze */
+  AddTask(m_Analyzer.CreateTask("find all strings", m_Document));
 
   /* Analyze all functions */
   if (spOperatingSystem)
@@ -145,6 +149,7 @@ bool Medusa::DefaultModuleSelector(BinaryStream::SPType spBinStrm, Database::SPT
 
 bool Medusa::NewDocument(
   BinaryStream::SPType spBinStrm,
+  bool StartAnalyzer,
   Medusa::AskDatabaseFunctionType AskDatabase,
   Medusa::ModuleSelectorFunctionType ModuleSelector,
   Medusa::FunctionType BeforeStart,
@@ -214,7 +219,7 @@ bool Medusa::NewDocument(
 
     if (!BeforeStart())
       return false;
-    if (!Start(spBinStrm, spCurDb, spCurLdr, spCurArchs, spCurOs))
+    if (!Start(spBinStrm, spCurDb, spCurLdr, spCurArchs, spCurOs, StartAnalyzer))
       return false;
     if (!AfterStart())
       return false;
@@ -338,10 +343,10 @@ void Medusa::Analyze(Address const& rAddr, Architecture::SPType spArch, u8 Mode)
   if (Mode == 0)
     Mode = spArch->GetDefaultMode(rAddr);
 
-  AddTask(m_Analyzer.CreateDisassembleTask(m_Document, rAddr, *spArch, Mode));
+  AddTask(m_Analyzer.CreateTask("disassemble with", m_Document, rAddr, *spArch, Mode));
 }
 
-bool Medusa::BuildControlFlowGraph(Address const& rAddr, ControlFlowGraph& rCfg) const
+bool Medusa::BuildControlFlowGraph(Address const& rAddr, ControlFlowGraph& rCfg)
 {
   return m_Analyzer.BuildControlFlowGraph(m_Document, rAddr, rCfg);
 }
@@ -400,7 +405,7 @@ Address Medusa::MakeAddress(Loader::SPType pLoader, Architecture::SPType pArch, 
 Address Medusa::MakeAddress(Loader::SPType pLoader, Architecture::SPType pArch, TBase Base, TOffset Offset)
 {
   Address NewAddr = m_Document.MakeAddress(Base, Offset);
-  if (NewAddr.GetAddressingType() == Address::UnknownType)
+  if (NewAddr.GetAddressingType() != Address::UnknownType)
     return NewAddr;
 
   return Address(Base, Offset);
@@ -408,7 +413,19 @@ Address Medusa::MakeAddress(Loader::SPType pLoader, Architecture::SPType pArch, 
 
 bool Medusa::CreateFunction(Address const& rAddr)
 {
-  AddTask(m_Analyzer.CreateMakeFunctionTask(m_Document, rAddr));
+  AddTask(m_Analyzer.CreateTask("create function", m_Document, rAddr));
+  return true;
+}
+
+bool Medusa::CreateUtf8String(Address const& rAddr)
+{
+  AddTask(m_Analyzer.CreateTask("create utf-8 string", m_Document, rAddr));
+  return true;
+}
+
+bool Medusa::CreateUtf16String(Address const& rAddr)
+{
+  AddTask(m_Analyzer.CreateTask("create utf-16 string", m_Document, rAddr));
   return true;
 }
 

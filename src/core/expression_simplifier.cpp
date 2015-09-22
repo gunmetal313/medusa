@@ -1,5 +1,6 @@
 #include "medusa/expression_simplifier.hpp"
 #include "medusa/expression_visitor.hpp"
+#include "medusa/expression_filter.hpp"
 
 MEDUSA_NAMESPACE_BEGIN
 
@@ -17,101 +18,104 @@ bool ExpressionSimplifier::Execute(void)
 
 TrackedIdPropagation::TrackedIdPropagation(Expression::LSPType & rExprs, u32 Id) : m_rExprs(rExprs), m_spResExpr(nullptr)
 {
-  // Find the track id expression
-  auto FindTrkIdExpr = [&](Expression::SPType spExpr) -> Expression::SPType
-  {
-    auto spAssign = expr_cast<AssignmentExpression>(spExpr);
-    if (spAssign == nullptr)
-      return nullptr;
-    auto spDstExpr = spAssign->GetDestinationExpression();
-    if (spDstExpr->GetClassKind() != Expression::TrackedId)
-      return nullptr;
-    return spDstExpr;
-  };
+  // FIXME(wisk):
+  //// Find the track id expression
+  //auto FindTrkIdExpr = [&](Expression::SPType spExpr) -> Expression::SPType
+  //{
+  //  auto spAssign = expr_cast<AssignmentExpression>(spExpr);
+  //  if (spAssign == nullptr)
+  //    return nullptr;
+  //  auto spDstExpr = spAssign->GetDestinationExpression();
+  //  if (spDstExpr->GetClassKind() != Expression::TrackedId)
+  //    return nullptr;
+  //  return spDstExpr;
+  //};
 
-  for (auto pExpr : m_rExprs)
-  {
-    Log::Write("core").Level(LogDebug) << "TIP input: " << pExpr->ToString() << LogEnd;
-  }
+  //for (auto pExpr : m_rExprs)
+  //{
+  //  Log::Write("core").Level(LogDebug) << "TIP input: " << pExpr->ToString() << LogEnd;
+  //}
 
-  for (auto itExpr = m_rExprs.begin(); itExpr != m_rExprs.end(); ++itExpr)
-  {
-    FilterVisitor FltVst(FindTrkIdExpr, 1);
-    (*itExpr)->Visit(&FltVst);
-    auto rFltExprs = FltVst.GetMatchedExpressions();
+  //for (auto itExpr = m_rExprs.begin(); itExpr != m_rExprs.end(); ++itExpr)
+  //{
+  //  FilterVisitor FltVst(FindTrkIdExpr, 1);
+  //  (*itExpr)->Visit(&FltVst);
+  //  auto rFltExprs = FltVst.GetMatchedExpressions();
 
-    if (rFltExprs.size() != 1)
-      continue;
+  //  if (rFltExprs.size() != 1)
+  //    continue;
 
-    m_spResExpr = expr_cast<AssignmentExpression>(*itExpr);
+  //  m_spResExpr = expr_cast<AssignmentExpression>(*itExpr);
 
-    break;
-  }
+  //  break;
+  //}
 }
 
 bool TrackedIdPropagation::_RunOnce(void)
 {
-  if (m_spResExpr == nullptr)
-    return false;
+  return false;
+  // FIXME(wisk):
+  //if (m_spResExpr == nullptr)
+  //  return false;
 
-  // this functor is used to retrieve the source of a specific tracked id
-  struct FindTrkSrc
-  {
-    FindTrkSrc(void) : m_IsAssigned(false) {}
+  //// this functor is used to retrieve the source of a specific tracked id
+  //struct FindTrkSrc
+  //{
+  //  FindTrkSrc(void) : m_IsAssigned(false) {}
 
-    Expression::SPType operator()(Expression::SPType spExpr)
-    {
-      switch (spExpr->GetClassKind())
-      {
-      case Expression::Assign:
-        m_IsAssigned = true;
-        break;
+  //  Expression::SPType operator()(Expression::SPType spExpr)
+  //  {
+  //    switch (spExpr->GetClassKind())
+  //    {
+  //    case Expression::Assign:
+  //      m_IsAssigned = true;
+  //      break;
 
-      case Expression::TrackedId:
-        if (m_IsAssigned)
-        {
-          m_IsAssigned = false;
-          break;
-        }
-        return spExpr;
+  //    case Expression::TrackedId:
+  //      if (m_IsAssigned)
+  //      {
+  //        m_IsAssigned = false;
+  //        break;
+  //      }
+  //      return spExpr;
 
-      default:
-        m_IsAssigned = false;
-        break;
-      }
+  //    default:
+  //      m_IsAssigned = false;
+  //      break;
+  //    }
 
-      return nullptr;
-    }
+  //    return nullptr;
+  //  }
 
-    bool m_IsAssigned;
-  };
+  //  bool m_IsAssigned;
+  //};
 
-  FindTrkSrc Matcher;
-  FilterVisitor FindTrkSrcVst(Matcher, 1);
+  //FindTrkSrc Matcher;
+  //FilterVisitor FindTrkSrcVst(Matcher, 1);
 
-  m_spResExpr->Visit(&FindTrkSrcVst);
+  //m_spResExpr->Visit(&FindTrkSrcVst);
 
-  auto rExprs = FindTrkSrcVst.GetMatchedExpressions();
+  //auto rExprs = FindTrkSrcVst.GetMatchedExpressions();
 
-  // If there's no more tracked id, it means we've finish
-  if (rExprs.empty())
-  {
-    m_IsDone = true;
-    return true;
-  }
+  //// If there's no more tracked id, it means we've finish
+  //if (rExprs.empty())
+  //{
+  //  m_IsDone = true;
+  //  return true;
+  //}
 
-  assert(rExprs.size() == 1);
-  auto spRes = expr_cast<TrackedIdentifierExpression>(rExprs.front());
-  assert(spRes->GetClassKind() == Expression::TrackedId);
+  //assert(rExprs.size() == 1);
+  //auto spRes = expr_cast<TrackedIdentifierExpression>(rExprs.front());
+  //assert(spRes->GetClassKind() == Expression::TrackedId);
 
-  auto spAssignTrkExpr = expr_cast<AssignmentExpression>(__FindTrackedIdExpression(spRes->GetId(), spRes->GetCurrentAddress()));
-  if (spAssignTrkExpr == nullptr)
-    return false;
+  //auto spAssignTrkExpr = expr_cast<AssignmentExpression>(__FindTrackedIdExpression(spRes->GetId(), spRes->GetCurrentAddress()));
+  //if (spAssignTrkExpr == nullptr)
+  //  return false;
 
-  if (!m_spResExpr->UpdateChild(spRes, spAssignTrkExpr->GetSourceExpression()))
-    return false;
+  //if (!m_spResExpr->UpdateChild(spRes, spAssignTrkExpr->GetSourceExpression()))
+  //  return false;
 
-  return true;
+  //return true;
 }
 
 bool TrackedIdPropagation::_Finalize(void)
@@ -133,12 +137,13 @@ Expression::SPType TrackedIdPropagation::__FindTrackedIdExpression(u32 Id, Addre
     if (spAssignExpr == nullptr)
       return nullptr;
 
-    auto spTrkId = expr_cast<TrackedIdentifierExpression>(spAssignExpr->GetDestinationExpression());
-    if (spTrkId == nullptr)
-      return nullptr;
+    // FIXME(wisk):
+    //auto spTrkId = expr_cast<TrackedIdentifierExpression>(spAssignExpr->GetDestinationExpression());
+    //if (spTrkId == nullptr)
+    //  return nullptr;
 
-    if (spTrkId->GetId() != Id || spTrkId->GetCurrentAddress() != rAddr)
-      return nullptr;
+    //if (spTrkId->GetId() != Id || spTrkId->GetCurrentAddress() != rAddr)
+    //  return nullptr;
 
     return spExpr;
   };
@@ -158,58 +163,125 @@ Expression::SPType TrackedIdPropagation::__FindTrackedIdExpression(u32 Id, Addre
   return nullptr;
 }
 
+TrackedIdMerger::TrackedIdMerger(Expression::SPType spToBeMerged, Expression::VSPType const& rExprsPool)
+: m_spMergedExpr(spToBeMerged), m_rExprsPool(rExprsPool)
+{
+
+}
+
+// FIXME(wisk):
+bool TrackedIdMerger::_RunOnce(void)
+{
+  return false;
+  //FilterVisitor FindTrkId([&](Expression::SPType spExpr) -> Expression::SPType
+  //{
+  //  auto spAssignExpr = expr_cast<AssignmentExpression>(spExpr);
+  //  if (spAssignExpr == nullptr)
+  //    return nullptr;
+  //  auto spTrkId = expr_cast<TrackedIdentifierExpression>(spAssignExpr->GetDestinationExpression());
+  //  if (spTrkId == nullptr)
+  //    return nullptr;
+  //  return spAssignExpr;
+  //});
+  //for (auto const spExpr : m_rExprsPool)
+  //  spExpr->Visit(&FindTrkId);
+  //auto TrkInfoExprs = FindTrkId.GetMatchedExpressions();
+  //if (TrkInfoExprs.empty())
+  //  return false;
+  //class MergeTrackId : public ExpressionVisitor
+  //{
+  //public:
+  //  MergeTrackId(Expression::SPType& rspToBeMerge, Expression::LSPType const& rTrkInfoExprs, bool& rDirty)
+  //    : m_rTrkInfoExprs(rTrkInfoExprs), m_rspToBeMerged(rspToBeMerge), m_rDirty(rDirty) {}
+
+  //  Expression::SPType VisitTrackedIdentifier(TrackedIdentifierExpression::SPType spTrkIdExpr)
+  //  {
+  //    for (auto spTrkInfo : m_rTrkInfoExprs)
+  //    {
+  //      auto spAssignExpr = expr_cast<AssignmentExpression>(spTrkInfo);
+  //      if (spAssignExpr == nullptr)
+  //        continue;
+  //      auto spDstTrkId = expr_cast<TrackedIdentifierExpression>(spAssignExpr->GetDestinationExpression());
+  //      if (spDstTrkId == nullptr)
+  //        continue;
+  //      if (spTrkIdExpr->GetCurrentAddress() != spDstTrkId->GetCurrentAddress() || spTrkIdExpr->GetId() != spDstTrkId->GetId())
+  //        continue;
+  //      if (m_rspToBeMerged->UpdateChild(spTrkIdExpr, spAssignExpr->GetSourceExpression()))
+  //        m_rDirty = true;
+  //    }
+  //    return nullptr;
+  //  }
+
+  //private:
+  //  Expression::SPType& m_rspToBeMerged;
+  //  Expression::LSPType const& m_rTrkInfoExprs;
+  //  bool& m_rDirty;
+  //};
+  //bool Dirty = false;
+  //MergeTrackId MTI(m_spMergedExpr, TrkInfoExprs, Dirty);
+  //m_spMergedExpr->Visit(&MTI);
+  //m_IsDone = Dirty ? false : true;
+  //return true;
+}
+
+bool TrackedIdMerger::_Finalize(void)
+{
+  return true;
+}
+
 NormalizeExpression::NormalizeExpression(Expression::SPType spExpr) : m_spExpr(spExpr)
 {
 }
 
 bool NormalizeExpression::_RunOnce(void)
 {
-  // TODO: handle all cases and associativity/commutativity
-  class SwapVisitor : public ExpressionVisitor
-  {
-  public:
-    SwapVisitor(void) : m_IsDirty(false) {}
-    virtual Expression::SPType VisitBinaryOperation(BinaryOperationExpression::SPType spBinOpExpr)
-    {
-      ExpressionVisitor::VisitBinaryOperation(spBinOpExpr);
+  return false;
+  //// TODO: handle all cases and associativity/commutativity
+  //class SwapVisitor : public ExpressionVisitor
+  //{
+  //public:
+  //  SwapVisitor(void) : m_IsDirty(false) {}
+  //  virtual Expression::SPType VisitBinaryOperation(BinaryOperationExpression::SPType spBinOpExpr)
+  //  {
+  //    ExpressionVisitor::VisitBinaryOperation(spBinOpExpr);
 
-      if (spBinOpExpr->GetLeftExpression()->IsKindOf(Expression::BinOp))
-      {
-        m_IsDirty = true;
-        spBinOpExpr->SwapExpressions();
-      }
+  //    if (spBinOpExpr->GetLeftExpression()->IsKindOf(Expression::BinOp))
+  //    {
+  //      m_IsDirty = true;
+  //      spBinOpExpr->SwapExpressions();
+  //    }
 
-      if (spBinOpExpr->GetLeftExpression()->IsKindOf(Expression::Const))
-      {
-        if (spBinOpExpr->GetRightExpression()->IsKindOf(Expression::Id))
-        {
-          m_IsDirty = true;
-          spBinOpExpr->SwapExpressions();
-          return nullptr;
-        }
+  //    if (spBinOpExpr->GetLeftExpression()->IsKindOf(Expression::Const))
+  //    {
+  //      if (spBinOpExpr->GetRightExpression()->IsKindOf(Expression::Id))
+  //      {
+  //        m_IsDirty = true;
+  //        spBinOpExpr->SwapExpressions();
+  //        return nullptr;
+  //      }
 
-        auto spRBinOpExpr = expr_cast<BinaryOperationExpression>(spBinOpExpr->GetRightExpression());
-        if (spRBinOpExpr != nullptr && spRBinOpExpr->GetLeftExpression()->IsKindOf(Expression::Id))
-        {
-          m_IsDirty = true;
-          spBinOpExpr->SwapLeftExpressions(spRBinOpExpr);
-          return nullptr;
-        }
-      }
-      return nullptr;
-    }
+  //      auto spRBinOpExpr = expr_cast<BinaryOperationExpression>(spBinOpExpr->GetRightExpression());
+  //      if (spRBinOpExpr != nullptr && spRBinOpExpr->GetLeftExpression()->IsKindOf(Expression::Id))
+  //      {
+  //        m_IsDirty = true;
+  //        spBinOpExpr->SwapLeftExpressions(spRBinOpExpr);
+  //        return nullptr;
+  //      }
+  //    }
+  //    return nullptr;
+  //  }
 
-    bool IsDirty(void) const { return m_IsDirty; }
+  //  bool IsDirty(void) const { return m_IsDirty; }
 
-  private:
-    bool m_IsDirty;
-  };
+  //private:
+  //  bool m_IsDirty;
+  //};
 
-  SwapVisitor SwpVst;
-  m_spExpr->Visit(&SwpVst);
-  if (!SwpVst.IsDirty())
-    m_IsDone = true;
-  return true;
+  //SwapVisitor SwpVst;
+  //m_spExpr->Visit(&SwpVst);
+  //if (!SwpVst.IsDirty())
+  //  m_IsDone = true;
+  //return true;
 }
 
 bool NormalizeExpression::_Finalize(void)
@@ -246,36 +318,92 @@ bool ConstantPropagation::_RunOnce(void)
   auto spBinOpExpr = expr_cast<BinaryOperationExpression>(Exprs.front());
   if (spBinOpExpr == nullptr)
     return false;
-  auto spLConstExpr = expr_cast<ConstantExpression>(spBinOpExpr->GetLeftExpression());
-  auto spRConstExpr = expr_cast<ConstantExpression>(spBinOpExpr->GetRightExpression());
+  auto spLConstExpr = expr_cast<BitVectorExpression>(spBinOpExpr->GetLeftExpression());
+  auto spRConstExpr = expr_cast<BitVectorExpression>(spBinOpExpr->GetRightExpression());
 
   if (spLConstExpr == nullptr || spRConstExpr == nullptr)
     return false;
 
   u64 Res = 0;
-  u32 Bit = std::max(spLConstExpr->GetSizeInBit(), spRConstExpr->GetSizeInBit()); // NOTE: cast to the larger type
+  u32 Bit = std::max(spLConstExpr->GetBitSize(), spRConstExpr->GetBitSize()); // NOTE: cast to the larger type
 
   switch (spBinOpExpr->GetOperation())
   {
   default:
     return false;
 
-  case OperationExpression::OpAdd:
-    Res = spLConstExpr->GetConstant() + spRConstExpr->GetConstant();
-    break;
-
-  case OperationExpression::OpSub:
-    Res = spLConstExpr->GetConstant() - spRConstExpr->GetConstant();
-    break;
-
     // TODO: handle all operations...
   }
 
-  auto spConstExpr = Expr::MakeConst(Bit, Res);
+  auto spConstExpr = Expr::MakeBitVector(Bit, Res);
   return m_spExpr->UpdateChild(spBinOpExpr, spConstExpr);
 }
 
 bool ConstantPropagation::_Finalize(void)
+{
+  return true;
+}
+
+// TODO(wisk): lazy instanciate filters
+//std::once_flag g_InitFlt;
+
+ExpressionRewriter::ExpressionRewriter(Expression::SPType& rspExpr)
+  : m_rspExpr(rspExpr)
+{
+
+}
+
+bool ExpressionRewriter::_RunOnce(void)
+{
+  using namespace Pattern;
+
+  // Filter id = cmp + <cond>a ? * : *
+  ExpressionFilter ExprFlt_CmpA(Ternary("expr", EQ((
+    OR(
+    /**/BCAST(
+    /****/LRS(
+    /******/XOR(
+    /********/XOR(
+    /**********/XOR(
+    /************/Any("op0"),
+    /************/Any("op1")),
+    /**********/Any("res")),
+    /********/AND(
+    /**********/XOR(
+    /************/Any("op0"),
+    /************/Any("res")),
+    /**********/XOR(
+    /************/Any("op0"),
+    /************/Any("op1")))),
+    /******/Any("shift_value")),
+    /****/Any("cast_bitsize")),
+    /**/Ternary("zf",
+    /****/EQ(Any("zf_op0"), Any("zero")),
+    /****/Any("zf_true"), Any("zf_false")))),
+
+    Any("int1_0")), Any("true"), Any("false")));
+
+  while (ExprFlt_CmpA.Execute(m_rspExpr))
+  {
+    auto spExpr = ExprFlt_CmpA.GetExpression("expr");
+    auto spOp0 = ExprFlt_CmpA.GetExpression("op0");
+    auto spOp1 = ExprFlt_CmpA.GetExpression("op1");
+    auto spTrue = ExprFlt_CmpA.GetExpression("true");
+    auto spFalse = ExprFlt_CmpA.GetExpression("false");
+    if (spExpr == nullptr || spOp0 == nullptr || spOp1 == nullptr || spTrue == nullptr || spFalse == nullptr)
+      break;
+
+    auto spFltExpr = Expr::MakeTernaryCond(ConditionExpression::CondUgt, spOp0, spOp1, spTrue, spFalse);
+    m_rspExpr = spFltExpr;
+
+    break;
+  }
+
+  m_IsDone = true;
+  return true;
+}
+
+bool ExpressionRewriter::_Finalize(void)
 {
   return true;
 }

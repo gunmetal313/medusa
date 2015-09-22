@@ -128,9 +128,10 @@ bool Symbolic::Block::IsEndOfBlock(void) const
     if (spIdExpr != nullptr && spIdExpr->GetId() == m_PcRegId)
       return spExpr;
 
-    auto spTrkIdExpr = expr_cast<TrackedIdentifierExpression>(pAssignExpr->GetDestinationExpression());
-    if (spTrkIdExpr != nullptr && spTrkIdExpr->GetId() == m_PcRegId)
-      return spExpr;
+    // FIXME(wisk):
+    //auto spTrkIdExpr = expr_cast<TrackedIdentifierExpression>(pAssignExpr->GetDestinationExpression());
+    //if (spTrkIdExpr != nullptr && spTrkIdExpr->GetId() == m_PcRegId)
+    //  return spExpr;
 
     return nullptr;
   }, 1);
@@ -194,6 +195,30 @@ Expression::LSPType Symbolic::Context::BacktrackRegister(Address const& RegAddr,
   // TODO: do the same thing for blocks' parent
 
   return Exprs;
+}
+
+Expression::VSPType Symbolic::Context::GetExpressions(void) const
+{
+  return Expression::VSPType();
+}
+
+std::string Symbolic::Context::ToString(void) const
+{
+  std::string Res = "";
+  for (auto const& rBlockPair : m_Blocks)
+  {
+    Res += rBlockPair.first.ToString();
+    Res += ":\n";
+    for (auto const& rExpr : rBlockPair.second.GetTrackedExpressions())
+    {
+      Res += "  ";
+      Res += rExpr->ToString();
+      Res += "\n";
+    }
+    Res += "\n";
+  }
+
+  return Res;
 }
 
 Symbolic::Symbolic(Document& rDoc) : m_rDoc(rDoc), m_pCpuInfo(nullptr), m_PcRegId(), m_SpRegId(), m_FollowFunction(true)
@@ -265,7 +290,7 @@ bool Symbolic::Execute(Address const& rAddr, Symbolic::Callback Cb)
 
       // If the next address is an imported symbol or the last instruction in block is a call and the caller
       // doesn't want follow sub-function, we try to emulate the call symbolically (using parameter number,
-      // calling convention, ...).
+      // calling convention...).
       if (NextAddrs.size() == 1 &&
         ((m_rDoc.GetLabelFromAddress(NextAddrs.front()).GetType() & Label::AccessMask) == Label::Imported
         || (spLastInsnInBlk->GetSubType() == Instruction::CallType && m_FollowFunction)))
@@ -312,37 +337,44 @@ bool Symbolic::_ExecuteBlock(Symbolic::Context& rCtxt, Address const& rBlkAddr, 
 {
   Address CurAddr = rBlkAddr;
   bool ModifyPc = false;
+  auto const& rModMgr = ModuleManager::Instance();
 
   do
   {
     auto spInsn = std::dynamic_pointer_cast<Instruction const>(m_rDoc.GetCell(CurAddr));
     if (spInsn == nullptr) // We return false if we reached an invalid instruction
       return false;
+    auto spArch = rModMgr.GetArchitecture(spInsn->GetArchitectureTag());
+    if (spArch == nullptr)
+      return false;
 
     // We need to inform the tracker that the pc register has moved to correctly backtrack pc later.
     //rBlk.TrackExpression(CurAddr, rCtxt.GetTrackContext(),
     //  Expr::MakeAssign(
     //  /**/Expr::MakeId(m_PcRegId, m_pCpuInfo),
-    //  /**/Expr::MakeConst(CurAddr.GetOffsetSize(), CurAddr.GetOffset())));
+    //  /**/Expr::MakeBitVector(CurAddr.GetOffsetSize(), CurAddr.GetOffset())));
 
     auto pInsnSem = spInsn->GetSemantic();
     for (auto spExpr : pInsnSem)
     {
+      // Start by normalizing identifier which actually extends sub-register to register (e.g. in 32-bit al → eax)
+      NormalizeIdentifier NrmId(*spArch->GetCpuInformation(), spInsn->GetMode());
+      auto spNrmExpr = spExpr->Visit(&NrmId);
+
       // TODO: replace PC type register in source of assignment operator to the current address
 
-      rBlk.TrackExpression(CurAddr, rCtxt.GetTrackContext(), spExpr);
+      // Now we can track the current expression
+      rBlk.TrackExpression(CurAddr, rCtxt.GetTrackContext(), spNrmExpr);
 
-      auto spAssignExpr = expr_cast<AssignmentExpression>(spExpr);
+      // Finally, we need to check if PC register is modified to exit the current block if needed
+      auto spAssignExpr = expr_cast<AssignmentExpression>(spNrmExpr);
       if (spAssignExpr == nullptr)
         continue;
-
       auto spIdExpr = expr_cast<IdentifierExpression>(spAssignExpr->GetDestinationExpression());
       if (spIdExpr == nullptr)
         continue;
-
       if (spIdExpr->GetId() != m_PcRegId)
         continue;
-
       ModifyPc = true;
     }
 
@@ -387,12 +419,12 @@ bool Symbolic::_DetermineNextAddresses(Symbolic::Context& rSymCtxt, Instruction 
   auto spResExpr = EvalVst.GetResultExpression();
 
   // When the next address is a constant value
-  auto spConstExpr = expr_cast<ConstantExpression>(spResExpr);
+  auto spConstExpr = expr_cast<BitVectorExpression>(spResExpr);
   if (spConstExpr != nullptr)
   {
     // HACK:
     Address DstAddr = rCurAddr;
-    DstAddr.SetOffset(spConstExpr->GetConstant());
+    DstAddr.SetOffset(spConstExpr->GetInt().ConvertTo<TOffset>());
     rNextAddresses.push_back(DstAddr);
     return true;
   }
@@ -401,15 +433,15 @@ bool Symbolic::_DetermineNextAddresses(Symbolic::Context& rSymCtxt, Instruction 
   auto spMemExpr = expr_cast<MemoryExpression>(spResExpr);
   if (spMemExpr != nullptr)
   {
-    auto spBaseExpr = expr_cast<ConstantExpression>(spMemExpr->GetBaseExpression());
-    auto spOffExpr = expr_cast<ConstantExpression>(spMemExpr->GetOffsetExpression());
+    auto spBaseExpr = expr_cast<BitVectorExpression>(spMemExpr->GetBaseExpression());
+    auto spOffExpr = expr_cast<BitVectorExpression>(spMemExpr->GetOffsetExpression());
     if (spOffExpr == nullptr)
       return false;
     Address DstAddr(rCurAddr.GetAddressingType(),
-      spBaseExpr != nullptr ? spBaseExpr->GetConstant() : 0x0,
-      spOffExpr->GetConstant(),
-      spBaseExpr != nullptr ? spBaseExpr->GetSizeInBit() : 0x0,
-      spOffExpr->GetSizeInBit());
+      spBaseExpr != nullptr ? spBaseExpr->GetInt().ConvertTo<u16>() : 0x0,
+      spOffExpr->GetInt().ConvertTo<u64>(),
+      spBaseExpr != nullptr ? spBaseExpr->GetBitSize() : 0x0,
+      spOffExpr->GetBitSize());
     rNextAddresses.push_back(DstAddr);
     return true;
   }
@@ -430,6 +462,77 @@ bool Symbolic::_ApplyCallingEffect(Address const& rImpFunc, Track::Context& rTrk
   {
     rBlk.TrackExpression(rImpFunc, rTrkCtxt, spExpr);
   }
+
+  return true;
+}
+
+Symbolic2::Symbolic2(Document& rDoc) : m_rDoc(rDoc)
+{
+}
+
+bool Symbolic2::AddBlock(Address const& rAddr)
+{
+  auto itBlk = m_Blocks.find(rAddr);
+  if (itBlk != std::end(m_Blocks))
+    return false;
+
+  Expression::VSPType BlkExprs;
+  if (!_DisassembleBasicBlock(rAddr, BlkExprs))
+    return false;
+  m_Blocks[rAddr] = BlkExprs;
+  return true;
+}
+
+bool Symbolic2::GetBlock(Address const& rAddr, Expression::VSPType& rBlocks)
+{
+  auto itBlk = m_Blocks.find(rAddr);
+  if (itBlk == std::end(m_Blocks))
+    return false;
+  for (auto Expr : itBlk->second)
+    rBlocks.push_back(Expr);
+  return true;
+}
+
+bool Symbolic2::_DisassembleBasicBlock(Address const& rAddr, Expression::VSPType& rBlocks)
+{
+  Address CurAddr = rAddr;
+  auto const& rModMgr = ModuleManager::Instance();
+  bool EndOfBlock = false;
+
+  do
+  {
+    auto spInsn = std::dynamic_pointer_cast<Instruction>(m_rDoc.GetCell(CurAddr));
+    if (spInsn == nullptr)
+      return false;
+
+    auto spArch = rModMgr.GetArchitecture(spInsn->GetArchitectureTag());
+    if (spArch == nullptr)
+      return false;
+    u32 PcRegId = spArch->GetCpuInformation()->GetRegisterByType(CpuInformation::ProgramPointerRegister, spInsn->GetMode());
+    if (PcRegId == 0)
+      return false;
+
+    for (auto Expr : spInsn->GetSemantic())
+    {
+      rBlocks.push_back(Expr);
+
+      auto spAssignExpr = expr_cast<AssignmentExpression>(Expr);
+      if (spAssignExpr == nullptr)
+        continue;
+      auto spIdExpr = expr_cast<IdentifierExpression>(spAssignExpr->GetDestinationExpression());
+      if (spIdExpr == nullptr)
+        continue;
+      if (PcRegId == spIdExpr->GetId())
+        EndOfBlock = true;
+    }
+
+    if (EndOfBlock)
+      break;
+
+    if (!m_rDoc.GetNextAddress(CurAddr, CurAddr))
+      return false;
+  }
+  while (true);
 
   return true;
 }

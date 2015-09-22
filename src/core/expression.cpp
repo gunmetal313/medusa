@@ -47,11 +47,24 @@ Expression::SPType SystemExpression::Visit(ExpressionVisitor* pVisitor)
   return pVisitor->VisitSystem(std::static_pointer_cast<SystemExpression>(shared_from_this()));
 }
 
+Expression::CompareType SystemExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<SystemExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+  if (GetName() != spCmpExpr->GetName())
+    return CmpSameExpression;
+  if (GetAddress() != spCmpExpr->GetAddress())
+    return CmpSameExpression;
+  return CmpIdentical;
+}
+
 // bind expression ////////////////////////////////////////////////////////////
 
 BindExpression::BindExpression(Expression::LSPType const& rExprs)
-: m_Expressions(rExprs)
 {
+  for (auto spExpr : rExprs)
+    m_Expressions.push_back(spExpr);
 }
 
 BindExpression::~BindExpression(void)
@@ -107,6 +120,25 @@ bool BindExpression::UpdateChild(Expression::SPType spOldExpr, Expression::SPTyp
   return false;
 }
 
+Expression::CompareType BindExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<BindExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+
+  auto const& rCmpBoundExprs = spCmpExpr->GetBoundExpressions();
+  if (m_Expressions.size() != rCmpBoundExprs.size())
+    return CmpSameExpression;
+
+  auto itCmpExpr = std::begin(rCmpBoundExprs);
+  for (auto const& rspExpr : m_Expressions)
+  {
+    if (rspExpr->Compare(*itCmpExpr) != CmpIdentical)
+      return CmpSameExpression;
+  }
+  return CmpIdentical;
+}
+
 // condition expression ///////////////////////////////////////////////////////
 
 ConditionExpression::ConditionExpression(Type CondType, Expression::SPType spRefExpr, Expression::SPType spTestExpr)
@@ -125,6 +157,21 @@ std::string ConditionExpression::ToString(void) const
     return "";
 
   return (boost::format("(%1% %2% %3%)") % m_spRefExpr->ToString() % s_StrCond[m_Type] % m_spTestExpr->ToString()).str();
+}
+
+Expression::CompareType ConditionExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<ConditionExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+
+  if (m_Type != spCmpExpr->GetType())
+    return CmpSameExpression;
+  if (m_spRefExpr->Compare(spCmpExpr->GetReferenceExpression()) != CmpIdentical)
+    return CmpSameExpression;
+  if (m_spTestExpr->Compare(spCmpExpr->GetTestExpression()) != CmpIdentical)
+    return CmpSameExpression;
+  return CmpIdentical;
 }
 
 TernaryConditionExpression::TernaryConditionExpression(Type CondType, Expression::SPType spRefExpr, Expression::SPType spTestExpr, Expression::SPType spTrueExpr, Expression::SPType spFalseExpr)
@@ -206,6 +253,20 @@ bool TernaryConditionExpression::UpdateChild(Expression::SPType spOldExpr, Expre
   return false;
 }
 
+Expression::CompareType TernaryConditionExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<TernaryConditionExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+  if (ConditionExpression::Compare(spCmpExpr) != CmpIdentical)
+    return CmpSameExpression;
+  if (m_spTrueExpr->Compare(spCmpExpr->GetTrueExpression()) != CmpIdentical)
+    return CmpSameExpression;
+  if (m_spFalseExpr->Compare(spCmpExpr->GetFalseExpression()) != CmpIdentical)
+    return CmpSameExpression;
+  return CmpIdentical;
+}
+
 IfElseConditionExpression::IfElseConditionExpression(Type CondType, Expression::SPType spRefExpr, Expression::SPType spTestExpr, Expression::SPType spThenExpr, Expression::SPType spElseExpr)
 : ConditionExpression(CondType, spRefExpr, spTestExpr), m_spThenExpr(spThenExpr), m_spElseExpr(spElseExpr)
 {
@@ -278,6 +339,20 @@ bool IfElseConditionExpression::UpdateChild(Expression::SPType spOldExpr, Expres
   return false;
 }
 
+Expression::CompareType IfElseConditionExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<IfElseConditionExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+  if (ConditionExpression::Compare(spCmpExpr) != CmpIdentical)
+    return CmpSameExpression;
+  if (m_spThenExpr->Compare(spCmpExpr->GetThenExpression()) != CmpIdentical)
+    return CmpSameExpression;
+  if (m_spElseExpr->Compare(spCmpExpr->GetElseExpression()) != CmpIdentical)
+    return CmpSameExpression;
+  return CmpIdentical;
+}
+
 WhileConditionExpression::WhileConditionExpression(Type CondType, Expression::SPType spRefExpr, Expression::SPType spTestExpr, Expression::SPType spBodyExpr)
 : ConditionExpression(CondType, spRefExpr, spTestExpr), m_spBodyExpr(spBodyExpr)
 {
@@ -334,6 +409,18 @@ bool WhileConditionExpression::UpdateChild(Expression::SPType spOldExpr, Express
   return false;
 }
 
+Expression::CompareType WhileConditionExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<WhileConditionExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+  if (ConditionExpression::Compare(spCmpExpr) != CmpIdentical)
+    return CmpSameExpression;
+  if (m_spBodyExpr->Compare(spCmpExpr->GetBodyExpression()) != CmpIdentical)
+    return CmpSameExpression;
+  return CmpIdentical;
+}
+
 // operation expression ///////////////////////////////////////////////////////
 
 AssignmentExpression::AssignmentExpression(Expression::SPType spDstExpr, Expression::SPType spSrcExpr)
@@ -385,6 +472,18 @@ bool AssignmentExpression::UpdateChild(Expression::SPType spOldExpr, Expression:
   return false;
 }
 
+Expression::CompareType AssignmentExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<AssignmentExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+  if (m_spDstExpr->Compare(spCmpExpr->GetDestinationExpression()) != CmpIdentical)
+    return CmpSameExpression;
+  if (m_spSrcExpr->Compare(spCmpExpr->GetSourceExpression()) != CmpIdentical)
+    return CmpSameExpression;
+  return CmpIdentical;
+}
+
 OperationExpression::OperationExpression(Type OpType)
 : m_OpType(OpType)
 {
@@ -396,31 +495,57 @@ OperationExpression::~OperationExpression(void)
 
 std::string OperationExpression::ToString(void) const
 {
-  static const char *s_StrOp[] =
+  switch (m_OpType)
   {
-    // Unknown
-    "???",
+    // Unknown / invalid
+  case OpUnk: default: return "???";
 
-    // Unary
-    "~", "-", "⇄", "bsf", "bsr"
+    // unary
+  case OpNot:  return "~";
+  case OpNeg:  return "-";
+  case OpSwap: return "⇄";
+  case OpBsf:  return "bsf";
+  case OpBsr:  return "bsr";
 
-    // Binary
-    "↔", "&", "|", "^", "<<", ">>", ">>(s)", "+", "-", "*", "/(s)", "/(u)", "%(s)", "%(u)", "↗(s)", "↗(z)"
-  };
-
-  if (m_OpType >= sizeof(s_StrOp) / sizeof(*s_StrOp))
-    return "<invalid>";
-  return s_StrOp[m_OpType];
+    // binary
+  case OpXchg: return "↔";
+  case OpAnd:  return "&";
+  case OpOr:   return "|";
+  case OpXor:  return "^";
+  case OpLls:  return "<<";
+  case OpLrs:  return ">>{u}";
+  case OpArs:  return ">>{s}";
+  case OpRol: return "rol";
+  case OpRor: return "ror";
+  case OpAdd:  return "+";
+  case OpAddFloat:  return "+{f}";
+  case OpSub:  return "-";
+  case OpMul:  return "*";
+  case OpSDiv: return "/{s}";
+  case OpUDiv: return "/{u}";
+  case OpSMod: return "%{s}";
+  case OpUMod: return "%{u}";
+  case OpSext: return "↗{s}";
+  case OpZext: return "↗{z}";
+  case OpInsertBits: return "<insert_bits>";
+  case OpExtractBits: return "<extract_bits>";
+  case OpBcast: return "<bcast>";
+  }
 }
 
-u32 OperationExpression::GetSizeInBit(void) const
+u32 OperationExpression::GetBitSize(void) const
 {
   return 0;
 }
 
+Expression::CompareType OperationExpression::Compare(Expression::SPType spExpr) const
+{
+  return CmpUnknown;
+}
+
 u8 OperationExpression::GetOppositeOperation(void) const
 {
-  // TODO:KS)
+  // TODO:(KS)
   return OpUnk;
 }
 
@@ -436,7 +561,7 @@ UnaryOperationExpression::~UnaryOperationExpression(void)
 
 std::string UnaryOperationExpression::ToString(void) const
 {
-  return (boost::format("%1%%2%") % OperationExpression::ToString() % m_spExpr->ToString()).str();
+  return (boost::format("%1%(%2%)") % OperationExpression::ToString() % m_spExpr->ToString()).str();
 }
 
 Expression::SPType UnaryOperationExpression::Clone(void) const
@@ -445,9 +570,9 @@ Expression::SPType UnaryOperationExpression::Clone(void) const
     m_spExpr->Clone());
 }
 
-u32 UnaryOperationExpression::GetSizeInBit(void) const
+u32 UnaryOperationExpression::GetBitSize(void) const
 {
-  return m_spExpr->GetSizeInBit();
+  return m_spExpr->GetBitSize();
 }
 
 Expression::SPType UnaryOperationExpression::Visit(ExpressionVisitor* pVisitor)
@@ -464,10 +589,23 @@ bool UnaryOperationExpression::UpdateChild(Expression::SPType spOldExpr, Express
   return true;
 }
 
+Expression::CompareType UnaryOperationExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<UnaryOperationExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+  if (m_OpType != spCmpExpr->GetOperation())
+    return CmpSameExpression;
+  if (m_spExpr->Compare(spCmpExpr->GetExpression()) != CmpIdentical)
+    return CmpSameExpression;
+  return CmpIdentical;
+}
+
 BinaryOperationExpression::BinaryOperationExpression(Type OpType, Expression::SPType spLeftExpr, Expression::SPType spRightExpr)
   : OperationExpression(OpType), m_spLeftExpr(spLeftExpr), m_spRightExpr(spRightExpr)
 {
-
+  assert(spLeftExpr != nullptr);
+  assert(spRightExpr != nullptr);
 }
 
 BinaryOperationExpression::~BinaryOperationExpression(void)
@@ -476,7 +614,15 @@ BinaryOperationExpression::~BinaryOperationExpression(void)
 
 std::string BinaryOperationExpression::ToString(void) const
 {
-  return (boost::format("(%1% %2% %3%)") % m_spLeftExpr->ToString() % OperationExpression::ToString() % m_spRightExpr->ToString()).str();
+  std::string Res("(");
+  Res += m_spLeftExpr->ToString();
+  Res += " ";
+  Res += OperationExpression::ToString();
+  Res += " ";
+  Res += m_spRightExpr->ToString();
+  Res += ")";
+  return Res;
+  //return (boost::format("(%1% %2% %3%)") % m_spLeftExpr->ToString() % OperationExpression::ToString() % m_spRightExpr->ToString()).str();
 }
 
 Expression::SPType BinaryOperationExpression::Clone(void) const
@@ -485,9 +631,9 @@ Expression::SPType BinaryOperationExpression::Clone(void) const
     m_spLeftExpr->Clone(), m_spRightExpr->Clone());
 }
 
-u32 BinaryOperationExpression::GetSizeInBit(void) const
+u32 BinaryOperationExpression::GetBitSize(void) const
 {
-  return std::max(m_spLeftExpr->GetSizeInBit(), m_spRightExpr->GetSizeInBit());
+  return std::max(m_spLeftExpr->GetBitSize(), m_spRightExpr->GetBitSize());
 }
 
 Expression::SPType BinaryOperationExpression::Visit(ExpressionVisitor* pVisitor)
@@ -519,6 +665,20 @@ bool BinaryOperationExpression::UpdateChild(Expression::SPType spOldExpr, Expres
   return false;
 }
 
+Expression::CompareType BinaryOperationExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<BinaryOperationExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+  if (m_OpType != spCmpExpr->GetOperation())
+    return CmpSameExpression;
+  if (m_spLeftExpr->Compare(spCmpExpr->GetLeftExpression()) != CmpIdentical)
+    return CmpSameExpression;
+  if (m_spRightExpr->Compare(spCmpExpr->GetRightExpression()) != CmpIdentical)
+    return CmpSameExpression;
+  return CmpIdentical;
+}
+
 void BinaryOperationExpression::SwapLeftExpressions(BinaryOperationExpression::SPType spOpExpr)
 {
   m_spLeftExpr.swap(spOpExpr->m_spLeftExpr);
@@ -529,83 +689,230 @@ void BinaryOperationExpression::SwapLeftExpressions(BinaryOperationExpression::S
 
 // constant expression ////////////////////////////////////////////////////////
 
-ConstantExpression::ConstantExpression(u32 ConstType, u64 Value)
-: m_ConstType(ConstType), m_Value(
-ConstType == ConstUnknownBit ||
-ConstType == Const64Bit ?
-Value : (Value & ((1ULL << m_ConstType) - 1)))
+BitVectorExpression::BitVectorExpression(u16 BitSize, ap_int Value)
+: m_Value(BitSize, Value)
 {
 }
 
-std::string ConstantExpression::ToString(void) const
+BitVectorExpression::BitVectorExpression(BitVector const& rValue)
+: m_Value(rValue)
 {
-  std::ostringstream Buffer;
-  if (m_ConstType != ConstUnknownBit)
-    Buffer << "int" << m_ConstType << "(";
-
-  auto TmpValue = m_Value;
-  //if (m_Value < 0)
-  //{
-  //  Buffer << "-";
-  //  TmpValue = (~m_Value) + 1;
-  //}
-  Buffer << "0x" << (boost::format("%x") % TmpValue).str();
-  if (m_ConstType != ConstUnknownBit)
-    Buffer << ")";
-  return Buffer.str();
 }
 
-Expression::SPType ConstantExpression::Clone(void) const
+std::string BitVectorExpression::ToString(void) const
 {
-  return std::make_shared<ConstantExpression>(m_ConstType, m_Value);
+  std::string Res("int");
+  Res += std::to_string(m_Value.GetBitSize());
+  Res += "(";
+  Res += m_Value.ToString();
+  Res += ")";
+  return Res;
+  //return (boost::format("int%d(%x)") % m_Value.GetBitSize() % m_Value.ToString()).str();
 }
 
-Expression::SPType ConstantExpression::Visit(ExpressionVisitor* pVisitor)
+Expression::SPType BitVectorExpression::Clone(void) const
 {
-  return pVisitor->VisitConstant(std::static_pointer_cast<ConstantExpression>(shared_from_this()));
+  return std::make_shared<BitVectorExpression>(m_Value);
 }
 
-bool ConstantExpression::Read(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, DataContainerType& rData) const
+Expression::SPType BitVectorExpression::Visit(ExpressionVisitor* pVisitor)
+{
+  return pVisitor->VisitBitVector(std::static_pointer_cast<BitVectorExpression>(shared_from_this()));
+}
+
+Expression::CompareType BitVectorExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<BitVectorExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+  if (m_Value.GetUnsignedValue() != spCmpExpr->GetInt().GetUnsignedValue())
+    return CmpSameExpression;
+  return CmpIdentical;
+}
+
+bool BitVectorExpression::Read(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, DataContainerType& rData) const
 {
   if (rData.size() != 1)
     return false;
 
-  rData.front() = std::make_tuple(m_ConstType, m_Value);
+  rData.front() = m_Value;
   return true;
 }
 
-bool ConstantExpression::Write(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, DataContainerType& rData)
+bool BitVectorExpression::Write(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, DataContainerType& rData)
 {
   return false;
 }
 
-bool ConstantExpression::GetAddress(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, Address& rAddress) const
+bool BitVectorExpression::GetAddress(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, Address& rAddress) const
 {
   return false;
 }
 
-bool ConstantExpression::SignExtend(u32 NewSizeInBit)
-{
-  switch (NewSizeInBit)
-  {
-  case Const8Bit:  m_Value = medusa::SignExtend<s64, 8>(m_Value); break;
-  case Const16Bit: m_Value = medusa::SignExtend<s64, 16>(m_Value); break;
-  case Const32Bit: m_Value = medusa::SignExtend<s64, 32>(m_Value); break;
-  case Const64Bit:                                                 break;
-  default: return false;
-  }
+// IntegerExpression::IntegerExpression(u16 BitSize, ap_int Value)
+// : m_Value(BitSize, Value)
+// {
+// }
 
-  switch (m_ConstType)
-  {
-  case Const8Bit:  m_Value &= 0x000000ff; break;
-  case Const16Bit: m_Value &= 0x0000ffff; break;
-  case Const32Bit: m_Value &= 0xffffffff; break;
-  case Const64Bit:                        break;
-  default: return false;
-  }
+// IntegerExpression::IntegerExpression(BitVector const& rValue)
+// : m_Value(rValue)
+// {
+// }
 
-  return true;
-}
+// std::string IntegerExpression::ToString(void) const
+// {
+//   std::string Res("int");
+//   Res += std::to_string(m_Value.GetBitSize());
+//   Res += "(";
+//   Res += m_Value.ToString();
+//   Res += ")";
+//   return Res;
+//   //return (boost::format("int%d(%x)") % m_Value.GetBitSize() % m_Value.ToString()).str();
+// }
+
+// Expression::SPType IntegerExpression::Clone(void) const
+// {
+//   return std::make_shared<IntegerExpression>(m_Value);
+// }
+
+// Expression::SPType IntegerExpression::Visit(ExpressionVisitor* pVisitor)
+// {
+//   return pVisitor->VisitBitVector(std::static_pointer_cast<IntegerExpression>(shared_from_this()));
+// }
+
+// Expression::CompareType IntegerExpression::Compare(Expression::SPType spExpr) const
+// {
+//   auto spCmpExpr = expr_cast<IntegerExpression>(spExpr);
+//   if (spCmpExpr == nullptr)
+//     return CmpDifferent;
+//   if (m_Value.GetUnsignedValue() != spCmpExpr->GetInt().GetUnsignedValue())
+//     return CmpSameExpression;
+//   return CmpIdentical;
+// }
+
+// bool IntegerExpression::Read(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, DataContainerType& rData) const
+// {
+//   if (rData.size() != 1)
+//     return false;
+
+//   rData.front() = m_Value;
+//   return true;
+// }
+
+// bool IntegerExpression::Write(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, DataContainerType& rData)
+// {
+//   return false;
+// }
+
+// bool IntegerExpression::GetAddress(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, Address& rAddress) const
+// {
+//   return false;
+// }
+
+// FloatingPointExpression::FloatingPointExpression(float const Value)
+// {
+//   m_Value.sgl = Value;
+//   m_Precision = FloatingPointExpression::Single;
+// }
+
+// FloatingPointExpression::FloatingPointExpression(double const Value)
+// {
+//   m_Value.dbl = Value;
+//   m_Precision = FloatingPointExpression::Double;
+// }
+
+// FloatingPointExpression::FloatingPointExpression(FloatingType const& rValue)
+// : m_Value(rValue)
+// {
+// }
+
+// std::string FloatingPointExpression::ToString(void) const
+// {
+//   std::string Res("float");
+//   Res += std::to_string(GetBitSize());
+//   Res += "(";
+
+//   std::ostringstream Tmp;
+
+//   switch (m_Precision)
+//   {
+//   case FloatingPointExpression::Single: Tmp << m_Value.sgl; break;
+//   case FloatingPointExpression::Double: Tmp << m_Value.dbl; break;
+//   default: return "<invalid variable>";
+//   }
+
+//   Res += Tmp.str() + ")";
+//   return Res;
+// }
+
+// u32 FloatingPointExpression::GetBitSize(void) const
+// {
+//   switch (m_Precision)
+//   {
+//   case FloatingPointExpression::Single: return 32; break;
+//   case FloatingPointExpression::Double: return 64; break;
+//   default: return 0;
+//   }
+// }
+
+// Expression::CompareType FloatingPointExpression::Compare(Expression::SPType spExpr) const
+// {
+//   auto spCmpExpr = expr_cast<FloatingPointExpression>(spExpr);
+//   if (spCmpExpr == nullptr)
+//     return CmpDifferent;
+
+//   switch (m_Precision)
+//   {
+//   case FloatingPointExpression::Single:
+//     if (m_Value.sgl != spCmpExpr->GetSingle()) return CmpSameExpression;
+//   break;
+//   case FloatingPointExpression::Double:
+//     if (m_Value.dbl != spCmpExpr->GetDouble()) return CmpSameExpression;
+//   break;
+//   default: return CmpDifferent;
+//   }
+
+//   return CmpIdentical;
+// }
+
+// Expression::SPType FloatingPointExpression::Clone(void) const
+// {
+//   return std::make_shared<FloatingPointExpression>(m_Value);
+// }
+
+// Expression::SPType FloatingPointExpression::Visit(ExpressionVisitor* pVisitor)
+// {
+//   return pVisitor->VisitFloat(std::static_pointer_cast<FloatingPointExpression>(shared_from_this()));
+// }
+
+// bool FloatingPointExpression::Read(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, DataContainerType& rData) const
+// {
+//   if (rData.size() != 1)
+//   return false;
+
+//   switch (m_Precision)
+//   {
+//   case FloatingPointExpression::Single:
+//     rData.front() = BitVector(*reinterpret_cast<u32 const*>(&m_Value.sgl));
+//   break;
+//   case FloatingPointExpression::Double:
+//     rData.front() = BitVector(*reinterpret_cast<u64 const*>(&m_Value.dbl));
+//   break;
+//   default: return false;
+//   }
+
+//   return true;
+// }
+
+// bool FloatingPointExpression::Write(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, DataContainerType& rData)
+// {
+//   return false;
+// }
+
+// bool FloatingPointExpression::GetAddress(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, Address& rAddress) const
+// {
+//   return false;
+// }
 
 // identifier expression //////////////////////////////////////////////////////
 
@@ -620,24 +927,33 @@ std::string IdentifierExpression::ToString(void) const
   if (pIdName == 0) return "";
 
   return (boost::format("Id%d(%s)") % m_pCpuInfo->GetSizeOfRegisterInBit(m_Id) % pIdName).str();
-
 }
 
 Expression::SPType IdentifierExpression::Clone(void) const
 {
   return std::make_shared<IdentifierExpression>(m_Id, m_pCpuInfo);
-
 }
 
-u32 IdentifierExpression::GetSizeInBit(void) const
+u32 IdentifierExpression::GetBitSize(void) const
 {
   return m_pCpuInfo->GetSizeOfRegisterInBit(m_Id);
-
 }
 
 Expression::SPType IdentifierExpression::Visit(ExpressionVisitor* pVisitor)
 {
   return pVisitor->VisitIdentifier(std::static_pointer_cast<IdentifierExpression>(shared_from_this()));
+}
+
+Expression::CompareType IdentifierExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<IdentifierExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+  if (m_Id != spCmpExpr->GetId())
+    return CmpSameExpression;
+  if (m_pCpuInfo != spCmpExpr->GetCpuInformation())
+    return CmpSameExpression;
+  return CmpIdentical;
 }
 
 bool IdentifierExpression::Read(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, DataContainerType& rData) const
@@ -651,7 +967,7 @@ bool IdentifierExpression::Read(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, D
   if (!pCpuCtxt->ReadRegister(m_Id, &Value, RegSize))
     return false;
 
-  rData.front() = std::make_tuple(RegSize, Value);
+  rData.front() = BitVector(RegSize, ap_int(Value));
   return true;
 }
 
@@ -659,13 +975,11 @@ bool IdentifierExpression::Write(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, 
 {
   auto DataValue = rData.front();
 
-  // FIXME: it seems to cause issue with movsx instruction
   u32 RegSize = m_pCpuInfo->GetSizeOfRegisterInBit(m_Id);
-  if (RegSize != std::get<0>(DataValue))
-    Log::Write("core").Level(LogWarning) << "mismatch type when writing into an identifier: " << ToString() << " id size: " << RegSize << " write size: " << std::get<0>(DataValue) << LogEnd;
-    //return false;)
+  if (RegSize != DataValue.GetBitSize())
+    Log::Write("core").Level(LogDebug) << "mismatch type when writing into an identifier: " << ToString() << " id size: " << RegSize << " write size: " << DataValue.GetBitSize() << LogEnd;
 
-  u64 RegVal = std::get<1>(DataValue).convert_to<u64>();
+  u64 RegVal = DataValue.ConvertTo<u64>();
   if (!pCpuCtxt->WriteRegister(m_Id, &RegVal, RegSize))
     return false;
 
@@ -702,7 +1016,7 @@ Expression::SPType VectorIdentifierExpression::Clone(void) const
   return std::make_shared<VectorIdentifierExpression>(m_VecId, m_pCpuInfo);
 }
 
-u32 VectorIdentifierExpression::GetSizeInBit(void) const
+u32 VectorIdentifierExpression::GetBitSize(void) const
 {
   u32 SizeInBit = 0;
   for (auto Id : m_VecId)
@@ -715,6 +1029,21 @@ u32 VectorIdentifierExpression::GetSizeInBit(void) const
 Expression::SPType VectorIdentifierExpression::Visit(ExpressionVisitor* pVisitor)
 {
   return pVisitor->VisitVectorIdentifier(std::static_pointer_cast<VectorIdentifierExpression>(shared_from_this()));
+}
+
+Expression::CompareType VectorIdentifierExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<VectorIdentifierExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+  if (m_pCpuInfo != spCmpExpr->GetCpuInformation())
+    return CmpSameExpression;
+  auto CmpVecId = spCmpExpr->GetVector();
+  if (m_VecId.size() != CmpVecId.size())
+    return CmpSameExpression;
+  if (!std::equal(std::begin(m_VecId), std::end(m_VecId), std::begin(CmpVecId)))
+    return CmpSameExpression;
+  return CmpIdentical;
 }
 
 void VectorIdentifierExpression::Prepare(DataContainerType& rData) const
@@ -733,7 +1062,7 @@ bool VectorIdentifierExpression::Read(CpuContext *pCpuCtxt, MemoryContext* pMemC
     u64 RegValue = 0;
     if (!pCpuCtxt->ReadRegister(Id, &RegValue, RegSize))
       return false;
-    rData.push_front(std::make_tuple(RegSize, RegValue));
+    rData.push_front(BitVector(RegSize, RegValue));
   }
   return true;
 }
@@ -745,8 +1074,8 @@ bool VectorIdentifierExpression::Write(CpuContext *pCpuCtxt, MemoryContext* pMem
     if (rData.empty())
       return false;
     u32 RegSize = m_pCpuInfo->GetSizeOfRegisterInBit(Id);
-    auto DataValue = rData.front();
-    if (!pCpuCtxt->WriteRegister(Id, &std::get<1>(DataValue), RegSize))
+    auto DataValue = rData.front().ConvertTo<u64>();
+    if (!pCpuCtxt->WriteRegister(Id, &DataValue, RegSize))
       return false;
     rData.pop_front();
   }
@@ -758,39 +1087,101 @@ bool VectorIdentifierExpression::GetAddress(CpuContext *pCpuCtxt, MemoryContext*
   return false;
 }
 
-TrackedIdentifierExpression::TrackedIdentifierExpression(u32 Id, CpuInformation const* pCpuInfo, Address const& rCurAddr)
-: m_Id(Id), m_pCpuInfo(pCpuInfo), m_CurAddr(rCurAddr) {}
+TrackExpression::TrackExpression(Expression::SPType spTrkExpr, Address const& rCurAddr, u8 Pos)
+: m_spTrkExpr(spTrkExpr), m_CurAddr(rCurAddr), m_Pos(Pos) {}
 
 
-TrackedIdentifierExpression::~TrackedIdentifierExpression(void)
+TrackExpression::~TrackExpression(void)
 {
 }
 
-std::string TrackedIdentifierExpression::ToString(void) const
+std::string TrackExpression::ToString(void) const
 {
-  auto pIdName = m_pCpuInfo->ConvertIdentifierToName(m_Id);
-
-  if (pIdName == 0) return "";
-
-  return (boost::format("Id%d(%s)[%s]") % m_pCpuInfo->GetSizeOfRegisterInBit(m_Id) % pIdName % m_CurAddr.ToString()).str();
-
+  return (boost::format("Trk(%s, %d, %s)") % m_CurAddr.ToString() % static_cast<unsigned int>(m_Pos) % m_spTrkExpr->ToString()).str();
 }
 
-Expression::SPType TrackedIdentifierExpression::Clone(void) const
+Expression::SPType TrackExpression::Clone(void) const
 {
-  return std::make_shared<TrackedIdentifierExpression>(m_Id, m_pCpuInfo, m_CurAddr);
-
+  return std::make_shared<TrackExpression>(m_spTrkExpr, m_CurAddr, m_Pos);
 }
 
-u32 TrackedIdentifierExpression::GetSizeInBit(void) const
+u32 TrackExpression::GetBitSize(void) const
 {
-  return m_pCpuInfo->GetSizeOfRegisterInBit(m_Id);
-
+  return m_spTrkExpr->GetBitSize();
 }
 
-Expression::SPType TrackedIdentifierExpression::Visit(ExpressionVisitor* pVisitor)
+Expression::SPType TrackExpression::Visit(ExpressionVisitor* pVisitor)
 {
-  return pVisitor->VisitTrackedIdentifier(std::static_pointer_cast<TrackedIdentifierExpression>(shared_from_this()));
+  return pVisitor->VisitTrack(std::static_pointer_cast<TrackExpression>(shared_from_this()));
+}
+
+Expression::CompareType TrackExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<TrackExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+  if (m_CurAddr != spCmpExpr->GetTrackAddress())
+    return CmpSameExpression;
+  if (m_Pos != spCmpExpr->GetTrackPosition())
+    return CmpSameExpression;
+  return CmpIdentical;
+}
+
+// variable ///////////////////////////////////////////////////////////////////
+
+VariableExpression::VariableExpression(std::string const& rVarName, ActionType VarAct, u32 BitSize)
+  : m_Name(rVarName), m_Action(VarAct), m_BitSize(BitSize)
+{
+  if (BitSize != 0 && VarAct != Alloc)
+    Log::Write("core").Level(LogWarning) << "variable expression doesn't require bit size if action is different from ``alloc''" << LogEnd;
+  if (BitSize == 0 && VarAct == Alloc)
+    Log::Write("core").Level(LogWarning) << "try to allocate a 0-bit variable" << LogEnd;
+}
+
+VariableExpression::~VariableExpression(void)
+{
+}
+
+std::string VariableExpression::ToString(void) const
+{
+  std::string ActStr = "";
+
+  switch (m_Action)
+  {
+  case Alloc: ActStr = "alloc"; break;
+  case Free: ActStr = "free"; break;
+  case Use: ActStr = "use"; break;
+  default: return "<invalid variable>";
+  }
+
+  return (boost::format("Var%d[%s] %s") % m_BitSize % ActStr % m_Name).str();
+}
+
+Expression::SPType VariableExpression::Clone(void) const
+{
+  return Expr::MakeVar(m_Name, m_Action, m_BitSize);
+}
+
+u32 VariableExpression::GetBitSize(void) const
+{
+  return m_BitSize;
+}
+
+Expression::SPType VariableExpression::Visit(ExpressionVisitor* pVisitor)
+{
+  return pVisitor->VisitVariable(std::static_pointer_cast<VariableExpression>(shared_from_this()));
+}
+
+Expression::CompareType VariableExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<VariableExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+  if (m_Action != spCmpExpr->GetAction())
+    return CmpSameExpression;
+  if (m_Name != spCmpExpr->GetName())
+    return CmpSameExpression;
+  return CmpIdentical;
 }
 
 // memory expression //////////////////////////////////////////////////////////
@@ -822,7 +1213,7 @@ Expression::SPType MemoryExpression::Clone(void) const
   return std::make_shared<MemoryExpression>(m_AccessSizeInBit, m_spBaseExpr->Clone(), m_spOffExpr->Clone(), m_Dereference);
 }
 
-u32 MemoryExpression::GetSizeInBit(void) const
+u32 MemoryExpression::GetBitSize(void) const
 {
   return m_AccessSizeInBit;
 }
@@ -849,14 +1240,14 @@ bool MemoryExpression::Read(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, DataC
       u64 MemVal = 0;
       if (!pMemCtxt->ReadMemory(LinAddr, &MemVal, m_AccessSizeInBit / 8))
         return false;
-      rDataValue = std::make_tuple(m_AccessSizeInBit, MemVal);
+      rDataValue = BitVector(m_AccessSizeInBit, MemVal);
     }
   }
   else
   {
     if (rData.size() != 1)
       return false;
-    rData.front() = std::make_tuple(m_AccessSizeInBit, LinAddr);
+    rData.front() = BitVector(m_AccessSizeInBit, LinAddr);
   }
 
   return true;
@@ -876,9 +1267,10 @@ bool MemoryExpression::Write(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, Data
 
     for (auto const& rDataValue : rData)
     {
-      if (!pMemCtxt->WriteMemory(LinAddr, &std::get<1>(rDataValue), std::get<0>(rDataValue) / 8))
+      auto Val = rDataValue.ConvertTo<u64>();
+      if (!pMemCtxt->WriteMemory(LinAddr, &Val, rDataValue.GetBitSize() / 8))
         return false;
-      LinAddr += std::get<0>(rDataValue) / 8;
+      LinAddr += rDataValue.GetBitSize() / 8;
     }
   }
   // but if it's just an addressing operation, we have to make sure the address is moved
@@ -895,9 +1287,9 @@ bool MemoryExpression::Write(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt, Data
       return false;
 
     //auto DataSize = std::get<0>(rData.front());
-    auto DataVal = std::get<1>(rData.front());
-    u64 DataToWrite = DataVal.convert_to<u64>(); // TODO: is it mandatory?
-    if (!pCpuCtxt->WriteRegister(spRegOff->GetId(), &DataToWrite, spRegOff->GetSizeInBit()))
+    auto DataVal = rData.front().ConvertTo<u64>();
+    u64 DataToWrite = DataVal; // TODO: is it mandatory?
+    if (!pCpuCtxt->WriteRegister(spRegOff->GetId(), &DataToWrite, spRegOff->GetBitSize()))
       return false;
   }
   return true;
@@ -913,10 +1305,10 @@ bool MemoryExpression::GetAddress(CpuContext *pCpuCtxt, MemoryContext* pMemCtxt,
   if (m_spOffExpr->Read(pCpuCtxt, pMemCtxt, OffsetData) == false)
     return false;
 
-  TBase Base = BaseData.size() != 1 ? 0x0 : std::get<1>(BaseData.front()).convert_to<TBase>();
+  TBase Base = BaseData.size() != 1 ? 0x0 : BaseData.front().ConvertTo<TBase>();
   if (OffsetData.size() != 1)
     return false;
-  TOffset OffsetValue = std::get<1>(OffsetData.front()).convert_to<TOffset>();
+  TOffset OffsetValue = OffsetData.front().ConvertTo<TOffset>();
   rAddress = Address(Base, OffsetValue);
   return true;
 }
@@ -952,32 +1344,48 @@ bool MemoryExpression::UpdateChild(Expression::SPType spOldExpr, Expression::SPT
   return false;
 }
 
+Expression::CompareType MemoryExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<MemoryExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+  if (m_AccessSizeInBit != spCmpExpr->GetAccessSizeInBit())
+    return CmpSameExpression;
+  auto spCmpBaseExpr = spCmpExpr->GetBaseExpression();
+  if (m_spBaseExpr == nullptr && spCmpBaseExpr != nullptr)
+    return CmpSameExpression;
+  if (m_spBaseExpr != nullptr && m_spBaseExpr->Compare(spCmpBaseExpr) != CmpIdentical)
+    return CmpSameExpression;
+  if (m_spOffExpr->Compare(spCmpExpr->GetOffsetExpression()) != CmpIdentical)
+    return CmpSameExpression;
+  if (m_Dereference != spCmpExpr->IsDereferencable())
+    return CmpSameExpression;
+  return CmpIdentical;
+}
+
 // symbolic expression ////////////////////////////////////////////////////////
 
-SymbolicExpression::SymbolicExpression(SymbolicExpression::Type SymType, std::string const& rValue, Address const& rAddr)
-: m_Type(SymType), m_Value(rValue), m_Address(rAddr) {}
+SymbolicExpression::SymbolicExpression(SymbolicExpression::Type SymType, std::string const& rValue, Address const& rAddr, Expression::SPType spExpr)
+: m_Type(SymType), m_Value(rValue), m_Address(rAddr), m_spExpr(spExpr) {}
 
 std::string SymbolicExpression::ToString(void) const
 {
   static char const* TypeToStr[] = { "unknown", "retval", "parm", "undef" };
   if (m_Type > Undefined)
     return "<invalid symbolic expression>";
-  return (boost::format("sym(%1, %2, %3)") % TypeToStr[m_Type] % m_Value % m_Address.ToString()).str();
+  if (m_spExpr == nullptr)
+    return (boost::format("Sym(%s, \"%s\", %s)") % TypeToStr[m_Type] % m_Value % m_Address.ToString()).str();
+  return (boost::format("Sym(%s, \"%s\", %s, %s)") % TypeToStr[m_Type] % m_Value % m_Address.ToString() % m_spExpr->ToString()).str();
 }
 
 Expression::SPType SymbolicExpression::Clone(void) const
 {
-  return std::make_shared<SymbolicExpression>(m_Type, m_Value, m_Address);
+  return std::make_shared<SymbolicExpression>(m_Type, m_Value, m_Address, m_spExpr);
 }
 
-u32 SymbolicExpression::GetSizeInBit(void) const
+u32 SymbolicExpression::GetBitSize(void) const
 {
   return 0;
-}
-
-bool SymbolicExpression::SignExtend(u32 NewSizeInBit)
-{
-  return false;
 }
 
 Expression::SPType SymbolicExpression::Visit(ExpressionVisitor* pVisitor)
@@ -985,16 +1393,48 @@ Expression::SPType SymbolicExpression::Visit(ExpressionVisitor* pVisitor)
   return pVisitor->VisitSymbolic(std::static_pointer_cast<SymbolicExpression>(shared_from_this()));
 }
 
+bool SymbolicExpression::UpdateChild(Expression::SPType spOldExpr, Expression::SPType spNewExpr)
+{
+  if (m_spExpr->Compare(spOldExpr) == Expression::CmpIdentical)
+  {
+    m_spExpr = spNewExpr;
+    return true;
+  }
+
+  return m_spExpr->UpdateChild(spOldExpr, spNewExpr);
+}
+
+Expression::CompareType SymbolicExpression::Compare(Expression::SPType spExpr) const
+{
+  auto spCmpExpr = expr_cast<SymbolicExpression>(spExpr);
+  if (spCmpExpr == nullptr)
+    return CmpDifferent;
+  if (m_Address != spCmpExpr->GetAddress())
+    return CmpSameExpression;
+  if (m_Value != spCmpExpr->GetValue())
+    return CmpSameExpression;
+  if (m_Type != spCmpExpr->GetType())
+    return CmpSameExpression;
+  if (m_spExpr->Compare(spCmpExpr->GetExpression()) != CmpIdentical)
+    return CmpSameExpression;
+  return CmpIdentical;
+}
+
 // helper /////////////////////////////////////////////////////////////////////
 
-Expression::SPType Expr::MakeConst(u32 ConstType, u64 Value)
+Expression::SPType Expr::MakeBitVector(BitVector const& rValue)
 {
-  return std::make_shared<ConstantExpression>(ConstType, Value);
+  return std::make_shared<BitVectorExpression>(rValue);
+}
+
+Expression::SPType Expr::MakeBitVector(u16 BitSize, ap_int Value)
+{
+  return std::make_shared<BitVectorExpression>(BitSize, Value);
 }
 
 Expression::SPType Expr::MakeBoolean(bool Value)
 {
-  return std::make_shared<ConstantExpression>(ConstantExpression::Const1Bit, Value ? 1 : 0);
+  return std::make_shared<BitVectorExpression>(1, Value ? 1 : 0);
 }
 
 Expression::SPType Expr::MakeId(u32 Id, CpuInformation const* pCpuInfo)
@@ -1007,9 +1447,19 @@ Expression::SPType Expr::MakeVecId(std::vector<u32> const& rVecId, CpuInformatio
   return std::make_shared<VectorIdentifierExpression>(rVecId, pCpuInfo);
 }
 
+Expression::SPType Expr::MakeTrack(Expression::SPType spTrkExpr, Address const& rCurAddr, u8 Pos)
+{
+  return std::make_shared<TrackExpression>(spTrkExpr, rCurAddr, Pos);
+}
+
 Expression::SPType Expr::MakeMem(u32 AccessSize, Expression::SPType spExprBase, Expression::SPType spExprOffset, bool Dereference)
 {
   return std::make_shared<MemoryExpression>(AccessSize, spExprBase, spExprOffset, Dereference);
+}
+
+Expression::SPType Expr::MakeVar(std::string const& rName, VariableExpression::ActionType Act, u16 BitSize)
+{
+  return std::make_shared<VariableExpression>(rName, Act, BitSize);
 }
 
 Expression::SPType Expr::MakeTernaryCond(ConditionExpression::Type CondType, Expression::SPType spRefExpr, Expression::SPType spTestExpr, Expression::SPType spTrueExpr, Expression::SPType spFalseExpr)
@@ -1047,12 +1497,17 @@ Expression::SPType Expr::MakeBind(Expression::LSPType const& rExprs)
   return std::make_shared<BindExpression>(rExprs);
 }
 
-Expression::SPType Expr::MakeSym(SymbolicExpression::Type SymType, std::string const& rValue, Address const& rAddr)
+Expression::SPType Expr::MakeSym(SymbolicExpression::Type SymType, std::string const& rValue, Address const& rAddr, Expression::SPType spExpr)
 {
-  return std::make_shared<SymbolicExpression>(SymType, rValue, rAddr);
+  return std::make_shared<SymbolicExpression>(SymType, rValue, rAddr, spExpr);
 }
 
 Expression::SPType Expr::MakeSys(std::string const& rName, Address const& rAddr)
 {
   return std::make_shared<SystemExpression>(rName, rAddr);
+}
+
+bool Expr::TestKind(Expression::Kind Kind, Expression::SPType spExpr)
+{
+  return spExpr->IsKindOf(Kind);
 }

@@ -83,8 +83,8 @@ class X86ArchConvertion(ArchConvertion):
 
     def _X86_GenerateSingleInstruction(self, opcd):
         res = ''
-        if 'prefix' in opcd:
-            res += self._GenerateRead('Prefix', 'Offset - 2', 8)
+        # if 'prefix' in opcd:
+        #     res += self._GenerateRead('Prefix', 'Offset - 2', 8)
         if 'suffix' in opcd:
             res += self._GenerateRead('Suffix', 'Offset + 0', 8)
 
@@ -110,13 +110,13 @@ class X86ArchConvertion(ArchConvertion):
     def _X86_GenerateMultipleInstruction(self, opcd_arr):
         res = ''
         cond_type = 'if'
-        has_pref = False
+        # has_pref = False
         has_suff = False
 
         for opcd in opcd_arr['sub_opcodes']:
-            if not has_pref and 'prefix' in opcd:
-                res += self._GenerateRead('Prefix', 'Offset - 2', 8)
-                has_pref = True
+            # if not has_pref and 'prefix' in opcd:
+            #     res += self._GenerateRead('Prefix', 'Offset - 2', 8)
+            #     has_pref = True
             if not has_suff and 'suffix' in opcd:
                 res += self._GenerateRead('Suffix', 'Offset + 0', 8)
                 has_suff = True
@@ -234,6 +234,10 @@ class X86ArchConvertion(ArchConvertion):
                     cond.append('(rInsn.GetPrefix() & X86_Prefix_AdSize)')
                 elif f == 'rep':
                     cond.append('(rInsn.GetPrefix() & X86_Prefix_Rep)')
+                elif f == 'repz':
+                    cond.append('(rInsn.GetPrefix() & X86_Prefix_Rep)')
+                elif f == 'repnz':
+                    cond.append('(rInsn.GetPrefix() & X86_Prefix_RepNz)')
                 elif f == 'rexb':
                     cond.append('(rInsn.GetPrefix() & X86_Prefix_REX_b) == X86_Prefix_REX_b')
                 elif f == 'rexw':
@@ -244,10 +248,24 @@ class X86ArchConvertion(ArchConvertion):
                 #    raise Exception('Unknown attr %s', f)
 
         if 'prefix' in opcd:
+            prefix_map = { 0x66 : 'X86_Prefix_OpSize', 0xF2 : 'X86_Prefix_RepNz', 0xF3 : 'X86_Prefix_Rep' }
+            prefixes = []
             if type(opcd['prefix']) == list:
-                cond.append('(%s)' % ' || '.join(['Prefix == %#04x' % x for x in opcd['prefix']]))
+                prefixes = opcd['prefix']
             else:
-                cond.append('Prefix == %#04x' % opcd['prefix'])
+                prefixes.append(opcd['prefix'])
+
+            for p in prefixes:
+                if not p in prefix_map:
+                    raise Exception('Unmapped prefix')
+                p_val = prefix_map[p]
+                cond.append('(rInsn.GetPrefix() & %s) == %s' % (p_val, p_val))
+
+
+            # if type(opcd['prefix']) == list:
+            #     cond.append('(%s)' % ' || '.join(['Prefix == %#04x' % x for x in opcd['prefix']]))
+            # else:
+            #     cond.append('Prefix == %#04x' % opcd['prefix'])
         if 'suffix' in opcd:
             cond.append('Suffix == %#04x' % opcd['suffix'])
 
@@ -423,7 +441,7 @@ class X86ArchConvertion(ArchConvertion):
 
                 if func_name.startswith('const'):
                     assert(len(func_args) == 2)
-                    return 'return Expr::MakeConst(%s, %s);' % tuple(func_args)
+                    return 'return Expr::MakeBitVector(%s, %s);' % tuple(func_args)
 
                 if func_name.startswith('addr_'):
                     addr_type = func_name[5]
@@ -524,13 +542,25 @@ class X86ArchConvertion(ArchConvertion):
                         'return nullptr;\n'
                         )
 
-                if func_name == 'reg_wq':
+                if func_name == 'reg_d64_r':
                     reg16 = 'return Expr::MakeId(%s, &m_CpuInfo);' % self.parent.id_mapper[func_args[0]]
-                    reg64 = 'return Expr::MakeId(%s, &m_CpuInfo);' % self.parent.id_mapper[func_args[1]]
+                    reg32 = 'return Expr::MakeId(%s, &m_CpuInfo);' % self.parent.id_mapper[func_args[1]]
+                    reg64 = 'return Expr::MakeId(%s, &m_CpuInfo);' % self.parent.id_mapper[func_args[2]]
 
-                    return  self.parent._GenerateCondition('if', '(rInsn.GetPrefix() & X86_Prefix_OpSize) == X86_Prefix_OpSize', reg16)+\
-                            self.parent._GenerateCondition('else', None, reg64)
-
+                    return self.parent._GenerateSwitch('Mode', [
+                        ('X86_Bit_16',
+                            self.parent._GenerateCondition('if', '(rInsn.GetPrefix() & X86_Prefix_OpSize) == X86_Prefix_OpSize', reg32)+
+                            self.parent._GenerateCondition('else', None, reg16),
+                            False),
+                        ('X86_Bit_64',
+                            reg64,
+                            False),
+                        ('X86_Bit_32',
+                            self.parent._GenerateCondition('if', '(rInsn.GetPrefix() & X86_Prefix_OpSize) == X86_Prefix_OpSize', reg16)+
+                            self.parent._GenerateCondition('else', None, reg32),
+                            False)],
+                        'return nullptr;\n'
+                        )
 
                 if func_name == 'call':
                     assert(len(func_args) == 1)
@@ -545,7 +575,7 @@ class X86ArchConvertion(ArchConvertion):
                         read_body += self.parent._GenerateCondition('if', '!rBinStrm.Read(Offset, Value)', 'return nullptr;')
                         read_body += 'Offset += sizeof(Value);\n'
                         read_body += 'rInsn.Length() += sizeof(Value);\n'
-                        read_body += 'return Expr::MakeConst(%d, Value);\n' % read_type
+                        read_body += 'return Expr::MakeBitVector(%d, Value);\n' % read_type
                         return read_body
                     def __GenerateReadTypeSignExtend(read_type, sign_type):
                         read_body = ''
@@ -553,7 +583,7 @@ class X86ArchConvertion(ArchConvertion):
                         read_body += self.parent._GenerateCondition('if', '!rBinStrm.Read(Offset, Value)', 'return nullptr;')
                         read_body += 'Offset += sizeof(Value);\n'
                         read_body += 'rInsn.Length() += sizeof(Value);\n'
-                        read_body += 'return Expr::MakeConst(%d, SignExtend<s%d, %d>(Value));\n' % (sign_type, sign_type, read_type)
+                        read_body += 'return Expr::MakeBitVector(%d, SignExtend<s%d, %d>(Value));\n' % (sign_type, sign_type, read_type)
                         return read_body
 
                     if read_type == 'b':

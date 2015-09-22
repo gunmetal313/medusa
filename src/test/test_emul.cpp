@@ -25,7 +25,7 @@ BOOST_AUTO_TEST_CASE(emul_interpreter_arm_test_case)
   {
     auto spFileBinStrm = std::make_shared<FileBinaryStream>(pSample);
     BOOST_REQUIRE(Core.NewDocument(
-      spFileBinStrm,
+      spFileBinStrm, false,
       [&](Path& rDbPath, std::list<Medusa::Filter> const&)
     {
       rDbPath = "hello_world.elf.arm-7_";
@@ -42,11 +42,10 @@ BOOST_AUTO_TEST_CASE(emul_interpreter_arm_test_case)
 
   auto& rDoc = Core.GetDocument();
   auto StartAddr = rDoc.GetAddressFromLabelName("start");
-  auto spStartInsn = std::dynamic_pointer_cast<Instruction>(rDoc.GetCell(StartAddr));
-  auto ArchTag = spStartInsn->GetArchitectureTag();
+  auto ArchTag = rDoc.GetArchitectureTag(StartAddr);
   auto spArch = ModuleManager::Instance().GetArchitecture(ArchTag);
   BOOST_REQUIRE(spArch != nullptr);
-  auto Mode = spStartInsn->GetMode();
+  auto Mode = rDoc.GetMode(StartAddr);
   BOOST_REQUIRE(Mode != 0);
 
   auto spOs = ModuleManager::Instance().GetOperatingSystem(rDoc.GetOperatingSystemName());
@@ -55,15 +54,15 @@ BOOST_AUTO_TEST_CASE(emul_interpreter_arm_test_case)
   Args.push_back(pSample);
   std::vector<std::string> Envp;
 
-  Execution Exec(rDoc, spArch, spOs);
-  BOOST_REQUIRE(Exec.Initialize(Mode, Args, Envp, SAMPLES_DIR));
+  Execution Exec(rDoc);
+  BOOST_REQUIRE(Exec.Initialize(Args, Envp, SAMPLES_DIR));
 
   char const* pEmulatorType = "interpreter";
 
   std::cout << "Using emulator type: " << pEmulatorType << std::endl;
   BOOST_REQUIRE(Exec.SetEmulator(pEmulatorType));
 
-  Exec.HookFunction("__libc_start_main", [](CpuContext* pCpuCtxt, MemoryContext* pMemCtxt, Address const&)
+  BOOST_REQUIRE(Exec.HookFunction("__libc_start_main", [](CpuContext* pCpuCtxt, MemoryContext* pMemCtxt, Address const&)
   {
     std::cout << "[__libc_start_main] try to execute R0 (main)" << std::endl;
     u32 MainAddr = 0;
@@ -80,9 +79,11 @@ BOOST_AUTO_TEST_CASE(emul_interpreter_arm_test_case)
     if (!pCpuCtxt->WriteRegister(PC, MainAddr))
       return;
 
-  });
+  }));
 
-  Exec.HookFunction("puts", [](CpuContext* pCpuCtxt, MemoryContext* pMemCtxt, Address const&)
+  bool PutsCalled = false;
+  bool IsHelloWorld = false;
+  BOOST_REQUIRE(Exec.HookFunction("puts", [&](CpuContext* pCpuCtxt, MemoryContext* pMemCtxt, Address const&)
   {
     auto const& rCpuInfo = pCpuCtxt->GetCpuInformation();
     u32 R0 = rCpuInfo.ConvertNameToIdentifier("r0");
@@ -116,14 +117,54 @@ BOOST_AUTO_TEST_CASE(emul_interpreter_arm_test_case)
       return;
     if (!pCpuCtxt->WriteRegister(PC, RetAddr))
       return;
-  });
+    PutsCalled = true;
+    IsHelloWorld = Param == "hello world!";
+  }));
 
-  Exec.HookFunction("abort", [](CpuContext* pCpuCtxt, MemoryContext* pMemCtxt, Address const&)
+  bool AbortCalled = false;
+  BOOST_REQUIRE(Exec.HookFunction("abort", [&](CpuContext* pCpuCtxt, MemoryContext* pMemCtxt, Address const&)
   {
     std::cout << "[abort]" << std::endl;
+    AbortCalled = true;
+  }));
+
+  Exec.HookInstruction([&](CpuContext* pCpuCtxt, MemoryContext* pMemCtxt, Address const& rAddr)
+  {
+    std::cout << pCpuCtxt->ToString() << std::endl;
+    
+    /* TODO(wisk): make a helper for this... */
+    u64 LinAddr;
+    BOOST_CHECK(pCpuCtxt->Translate(rAddr, LinAddr));
+
+    BinaryStream::SPType spBinStrm;
+    u32 Off;
+    u32 Flags;
+    BOOST_CHECK(pMemCtxt->FindMemory(LinAddr, spBinStrm, Off, Flags));
+
+    auto ArchTag = pCpuCtxt->GetCpuInformation().GetArchitectureTag();
+    // FIXME(KS): it may not work with thumb mode...
+    auto ArchMode = pCpuCtxt->GetMode();
+    auto& rModMgr = ModuleManager::Instance();
+    auto spArch = rModMgr.GetArchitecture(ArchTag);
+    BOOST_CHECK(spArch != nullptr);
+
+    auto spCurInsn = std::make_shared<Instruction>();
+    BOOST_CHECK(spArch->Disassemble(*spBinStrm, Off, *spCurInsn, ArchMode));
+
+    PrintData PD;
+    PD(rAddr);
+    BOOST_CHECK(spArch->FormatCell(rDoc, rAddr, *spCurInsn, PD));
+    std::cout << PD.GetTexts() << std::endl;
+    for (auto e : spCurInsn->GetSemantic())
+      std::cout << e->ToString() << std::endl;
+
   });
 
   Exec.Execute(StartAddr);
+
+  BOOST_CHECK(PutsCalled);
+  BOOST_CHECK(IsHelloWorld);
+  BOOST_CHECK(AbortCalled);
 
   Core.CloseDocument();
 }

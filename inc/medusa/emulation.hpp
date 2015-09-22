@@ -8,6 +8,8 @@
 #include "medusa/expression.hpp"
 #include "medusa/context.hpp"
 #include "medusa/document.hpp"
+#include "medusa/instruction.hpp"
+#include "medusa/architecture.hpp"
 
 #include <unordered_map>
 #include <functional>
@@ -51,8 +53,9 @@ public:
     return WriteMemory(rAddr, &rMemVal, sizeof(rMemVal));
   }
 
-  virtual bool Execute(Address const& rAddress, Expression::SPType spExpr) = 0;
-  virtual bool Execute(Address const& rAddress, Expression::LSPType const& rExprList) = 0;
+  virtual bool Execute(Expression::SPType spExpr);
+  virtual bool Execute(Expression::VSPType const& rExprs) = 0;
+  virtual bool Execute(Address const& rAddress);
 
   enum HookType
   {
@@ -65,12 +68,24 @@ public:
   typedef std::function<void(CpuContext*, MemoryContext*, Address const&)> HookCallback;
 
   virtual bool AddHookOnInstruction(HookCallback InsnCb);
+  virtual void CallInstructionHook(void);
   virtual bool AddHook(Address const& rAddress, u32 Type, HookCallback Callback);
   virtual bool AddHook(Document const& rDoc, std::string const& rLabelName, u32 Type, HookCallback Callback);
   virtual bool RemoveHook(Address const& rAddress);
+  virtual bool TestHook(Address const& rAddress, u32 Type) const;
+
+  virtual bool InvalidateCache(void);
 
 protected:
   Emulator(CpuInformation const* pCpuInfo, CpuContext* pCpuCtxt, MemoryContext *pMemCtxt);
+
+  typedef std::function<bool (Address const&, Instruction&, Architecture&, u8)> DisasmCbType;
+  bool _Disassemble(Address const& rAddress, DisasmCbType Cb);
+
+  // Semantic cache
+  bool _IsSemanticCached(Address const& rAddress) const;
+  bool _CacheSemantic(Address const& rAddress, Expression::VSPType& rExprs);
+  bool _InvalidSemantic(Address const& rAddress);
 
   struct HookInformation
   {
@@ -79,14 +94,15 @@ protected:
     HookCallback m_Callback;
   };
 
-  bool TestHook(Address const& rAddress, u32 Type) const;
-
   CpuInformation const* m_pCpuInfo;
   CpuContext*           m_pCpuCtxt;
   MemoryContext*        m_pMemCtxt;
   typedef std::unordered_map<Address, HookInformation> HookAddressHashMap;
   HookAddressHashMap    m_Hooks;
   HookCallback          m_InsnCb;
+
+  typedef std::unordered_map<Address, Expression::VSPType> SemanticCacheType;
+  SemanticCacheType m_SemCache;
 };
 
 typedef Emulator* (*TGetEmulator)(CpuInformation const* pCpuInfo, CpuContext* pCpuCtxt, MemoryContext* pMemCtxt);

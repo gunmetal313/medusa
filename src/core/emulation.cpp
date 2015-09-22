@@ -1,4 +1,5 @@
 #include "medusa/emulation.hpp"
+#include "medusa/module.hpp"
 
 MEDUSA_NAMESPACE_BEGIN
 
@@ -49,6 +50,50 @@ bool Emulator::WriteMemory(Address const& rAddr, void const* pVal, u32 Size)
   return m_pMemCtxt->WriteMemory(LinAddr, pVal, Size);
 }
 
+bool Emulator::Execute(Expression::SPType spExpr)
+{
+  return Execute(Expression::VSPType({ spExpr }));
+}
+
+bool Emulator::Execute(Address const& rAddress)
+{
+  if (_IsSemanticCached(rAddress))
+  {
+    auto const& rExprs = m_SemCache[rAddress];
+    return Execute(rExprs);
+  }
+
+  Expression::VSPType Exprs;
+  _Disassemble(rAddress, [&](Address const& rInsnAddr, Instruction& rCurInsn, Architecture& rCurArch, u8 CurMode) -> bool
+  {
+    auto CurAddr = rCurArch.CurrentAddress(rInsnAddr, rCurInsn);
+    Exprs.push_back(Expr::MakeSys("call_insn_cb", rInsnAddr));
+
+    // Set the current IP/PC address
+    if (!rCurArch.EmitSetExecutionAddress(Exprs, CurAddr, CurMode))
+    {
+      Log::Write("core").Level(LogError) << "unable to emit set execution address to " << CurAddr << LogEnd;
+      return false;
+    }
+
+    for (auto spExpr : rCurInsn.GetSemantic())
+      Exprs.push_back(spExpr);
+
+    Exprs.push_back(Expr::MakeSys("check_exec_hook", rInsnAddr));
+
+    // Jump, Call, Return types finish the block
+    if (rCurInsn.GetSubType() & (Instruction::JumpType | Instruction::CallType | Instruction::ReturnType))
+      return false;
+
+    return true;
+  });
+
+  if (!_CacheSemantic(rAddress, Exprs))
+    return false;
+
+  return Execute(Exprs);
+}
+
 bool Emulator::AddHook(Address const& rAddress, u32 Type, HookCallback Callback)
 {
   auto itHook = m_Hooks.find(rAddress);
@@ -67,6 +112,19 @@ bool Emulator::AddHookOnInstruction(HookCallback InsnCb)
 {
   m_InsnCb = InsnCb;
   return true;
+}
+
+void Emulator::CallInstructionHook(void)
+{
+  if (!m_InsnCb)
+    return;
+  Address CurAddr;
+  if (!m_pCpuCtxt->GetAddress(CpuContext::AddressExecution, CurAddr))
+  {
+    Log::Write("core").Level(LogError) << "failed to get execution address" << LogEnd;
+    return;
+  }
+  m_InsnCb(m_pCpuCtxt, m_pMemCtxt, CurAddr);
 }
 
 bool Emulator::AddHook(Document const& rDoc, std::string const& rLabelName, u32 Type, HookCallback Callback)
@@ -94,6 +152,88 @@ bool Emulator::TestHook(Address const& rAddress, u32 Type) const
     return false;
 
   itHook->second.m_Callback(m_pCpuCtxt, m_pMemCtxt, rAddress);
+  return true;
+}
+
+bool Emulator::InvalidateCache(void)
+{
+  return false;
+}
+
+bool Emulator::_Disassemble(Address const& rAddress, DisasmCbType Cb)
+{
+  Address InsnAddr = rAddress;
+  while (true)
+  {
+    // Try to translate logical address to linear address
+    u64 LinAddr;
+    if (!m_pCpuCtxt->Translate(InsnAddr, LinAddr))
+    {
+      Log::Write("core").Level(LogError) << "unable to translate address: " << InsnAddr << LogEnd;
+      return false;
+    }
+
+    // To disassemble instruction, we need both a binary stream and offset
+    BinaryStream::SPType spBinStrm;
+    u32 Off;
+    u32 Flags;
+    if (!m_pMemCtxt->FindMemory(LinAddr, spBinStrm, Off, Flags))
+    {
+      Log::Write("core").Level(LogError) << "unable to find memory for: " << InsnAddr << ", linear address: " << LinAddr << LogEnd;
+      return false;
+    }
+
+    // Retrieve the current mode and architecture module
+    auto ArchTag = m_pCpuCtxt->GetCpuInformation().GetArchitectureTag();
+    // FIXME(KS): it may not work with thumb mode...
+    auto ArchMode = m_pCpuCtxt->GetMode();
+    auto& rModMgr = ModuleManager::Instance();
+    auto spArch = rModMgr.GetArchitecture(ArchTag);
+    if (spArch == nullptr)
+    {
+      Log::Write("core").Level(LogError) << "unable to find architecture module for: " << InsnAddr << ", linear address: " << LinAddr << LogEnd;
+      return false;
+    }
+
+    // Disassemble the current instruction and store the result
+    auto spCurInsn = std::make_shared<Instruction>();
+    if (!spArch->Disassemble(*spBinStrm, Off, *spCurInsn, ArchMode))
+    {
+      Log::Write("core").Level(LogError) << "unable to disassemble instruction at: " << InsnAddr << ", linear address: " << LinAddr << LogEnd;
+      return false;
+    }
+
+    if (!Cb(InsnAddr, *spCurInsn, *spArch, ArchMode))
+      break;
+
+    // Go to the next instruction
+    InsnAddr += spCurInsn->GetLength();
+  }
+
+  return true;
+}
+
+bool Emulator::_IsSemanticCached(Address const& rAddress) const
+{
+  return m_SemCache.find(rAddress) != std::end(m_SemCache);
+}
+
+bool Emulator::_CacheSemantic(Address const& rAddress, Expression::VSPType& rExprs)
+{
+  if (rExprs.empty())
+    return false;
+  if (_IsSemanticCached(rAddress))
+    return false;
+  m_SemCache[rAddress] = rExprs;
+  return true;
+}
+
+bool Emulator::_InvalidSemantic(Address const& rAddress)
+{
+  auto itCache = m_SemCache.find(rAddress);
+  if (itCache == std::end(m_SemCache))
+    return false;
+  m_SemCache.erase(itCache);
   return true;
 }
 

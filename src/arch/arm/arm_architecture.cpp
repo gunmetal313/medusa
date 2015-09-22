@@ -21,16 +21,21 @@ char const* ArmArchitecture::ARMCpuInformation::ConvertIdentifierToName(u32 Id) 
   static std::map<u32, char const*> s_IdToName;
   if (s_IdToName.empty())
   {
-    s_IdToName[ARM_RegR0 ] = "r0";
-    s_IdToName[ARM_RegR1 ] = "r1";
-    s_IdToName[ARM_RegR2 ] = "r2";
-    s_IdToName[ARM_RegR3 ] = "r3";
-    s_IdToName[ARM_RegR4 ] = "r4";
-    s_IdToName[ARM_RegR5 ] = "r5";
-    s_IdToName[ARM_RegR6 ] = "r6";
-    s_IdToName[ARM_RegR7 ] = "r7";
-    s_IdToName[ARM_RegR8 ] = "r8";
-    s_IdToName[ARM_RegR9 ] = "r9";
+    s_IdToName[ARM_FlNf]   = "nf";
+    s_IdToName[ARM_FlCf]   = "cf";
+    s_IdToName[ARM_FlVf]   = "vf";
+    s_IdToName[ARM_FlZf]   = "zf";
+
+    s_IdToName[ARM_RegR0]  = "r0";
+    s_IdToName[ARM_RegR1]  = "r1";
+    s_IdToName[ARM_RegR2]  = "r2";
+    s_IdToName[ARM_RegR3]  = "r3";
+    s_IdToName[ARM_RegR4]  = "r4";
+    s_IdToName[ARM_RegR5]  = "r5";
+    s_IdToName[ARM_RegR6]  = "r6";
+    s_IdToName[ARM_RegR7]  = "r7";
+    s_IdToName[ARM_RegR8]  = "r8";
+    s_IdToName[ARM_RegR9]  = "r9";
     s_IdToName[ARM_RegR10] = "r10";
     s_IdToName[ARM_RegR11] = "fp";
     s_IdToName[ARM_RegR12] = "ip";
@@ -50,6 +55,11 @@ u32 ArmArchitecture::ARMCpuInformation::ConvertNameToIdentifier(std::string cons
   static std::map<std::string, u32> s_NameToId;
   if (s_NameToId.empty())
   {
+    s_NameToId["nf"]  = ARM_FlNf;
+    s_NameToId["cf"]  = ARM_FlCf;
+    s_NameToId["vf"]  = ARM_FlVf;
+    s_NameToId["zf"]  = ARM_FlZf;
+
     s_NameToId["r0"]  = ARM_RegR0;
     s_NameToId["r1"]  = ARM_RegR1;
     s_NameToId["r2"]  = ARM_RegR2;
@@ -84,24 +94,40 @@ u32 ArmArchitecture::ARMCpuInformation::GetRegisterByType(CpuInformation::Type R
   switch (RegType)
   {
   case StackPointerRegister:   return ARM_RegSP;
-  case StackFrameRegister:     return ARM_RegUnknown;
-  case ProgramBaseRegister:    return ARM_RegUnknown;
   case ProgramPointerRegister: return ARM_RegPC;
-  case AccumulatorRegister:    return ARM_RegUnknown;
-  case CounterRegister:        return ARM_RegUnknown;
-  case InvalidRegister:        return ARM_RegUnknown;
   default:                     return ARM_RegUnknown;
   };
 }
 
+u32 ArmArchitecture::ARMCpuInformation::GetSizeOfRegisterInBit(u32 Id) const
+{
+  switch (Id)
+  {
+  case ARM_FlNf: case ARM_FlCf: case ARM_FlVf: case ARM_FlZf:
+    return 1;
+
+  case ARM_RegR0:  case ARM_RegR1: case ARM_RegR2:  case ARM_RegR3:
+  case ARM_RegR4:  case ARM_RegR5: case ARM_RegR6:  case ARM_RegR7:
+  case ARM_RegR8:  case ARM_RegR9: case ARM_RegR10: case ARM_RegR11:
+  case ARM_RegR12: case ARM_RegR13:case ARM_RegR14: case ARM_RegR15:
+    return 32;
+
+  default:
+    return 0;
+  }
+}
+
 bool ArmArchitecture::ARMCpuContext::ReadRegister(u32 Reg, void* pVal, u32 BitSize) const
 {
-  if (BitSize != 32)
-    return false;
-
-#define READ_REGISTER(idx) memcpy(pVal, &m_Context.Registers[idx], 4)
+#define READ_FLAG(fl) if (BitSize != 1) return false; *reinterpret_cast<u8*>(pVal) = (m_Context.CPSR & fl ? 1 : 0);
+#define READ_REGISTER(idx) if (BitSize != 32) return false; memcpy(pVal, &m_Context.Registers[idx], 4)
   switch (Reg)
   {
+  case ARM_FlNf: READ_FLAG(ARM_CSPR_N); break;
+  case ARM_FlCf: READ_FLAG(ARM_CSPR_C); break;
+  case ARM_FlVf: READ_FLAG(ARM_CSPR_V); break;
+  case ARM_FlZf: READ_FLAG(ARM_CSPR_Z); break;
+
   case ARM_RegR0:  READ_REGISTER(0);  break;
   case ARM_RegR1:  READ_REGISTER(1);  break;
   case ARM_RegR2:  READ_REGISTER(2);  break;
@@ -121,17 +147,21 @@ bool ArmArchitecture::ARMCpuContext::ReadRegister(u32 Reg, void* pVal, u32 BitSi
   default: return false;
   }
 #undef READ_REGISTER
+#undef READ_FLAG
   return true;
 }
 
-bool ArmArchitecture::ARMCpuContext::WriteRegister(u32 Reg, void const* pVal, u32 BitSize, bool SignExtend)
+bool ArmArchitecture::ARMCpuContext::WriteRegister(u32 Reg, void const* pVal, u32 BitSize)
 {
-  if (BitSize != 32)
-    return false;
-
-#define WRITE_REGISTER(idx) memcpy(&m_Context.Registers[idx], pVal, 4)
+#define WRITE_FLAG(fl) if (BitSize != 1) return false; if (reinterpret_cast<u8 const*>(pVal)) m_Context.CPSR |= fl; else m_Context.CPSR &= ~fl;
+#define WRITE_REGISTER(idx) if (BitSize != 32) return false; memcpy(&m_Context.Registers[idx], pVal, 4)
   switch (Reg)
   {
+  case ARM_FlNf: WRITE_FLAG(ARM_CSPR_N); break;
+  case ARM_FlCf: WRITE_FLAG(ARM_CSPR_C); break;
+  case ARM_FlVf: WRITE_FLAG(ARM_CSPR_V); break;
+  case ARM_FlZf: WRITE_FLAG(ARM_CSPR_Z); break;
+
   case ARM_RegR0:  WRITE_REGISTER(0);  break;
   case ARM_RegR1:  WRITE_REGISTER(1);  break;
   case ARM_RegR2:  WRITE_REGISTER(2);  break;
@@ -151,6 +181,7 @@ bool ArmArchitecture::ARMCpuContext::WriteRegister(u32 Reg, void const* pVal, u3
   default: return false;
   }
 #undef WRITE_REGISTER
+#undef READ_REGISTER
   return true;
 }
 
@@ -182,13 +213,39 @@ void ArmArchitecture::ARMCpuContext::SetMode(u8 Mode)
   }
 }
 
+bool ArmArchitecture::ARMCpuContext::GetAddress(CpuContext::AddressKind AddrKind, Address& rAddr) const
+{
+  switch (AddrKind)
+  {
+    case AddressExecution:
+      rAddr = Address(Address::VirtualType, 0, m_Context.Registers[15], 0, 32);
+      return true;
+
+    default:
+      return false;
+  }
+}
+
+bool ArmArchitecture::ARMCpuContext::SetAddress(CpuContext::AddressKind AddrKind, Address const& rAddr)
+{
+  switch (AddrKind)
+  {
+  case AddressExecution:
+    m_Context.Registers[15] = static_cast<u32>(rAddr.GetOffset());
+    return true;
+
+  default:
+    return false;
+  }
+}
+
 std::string ArmArchitecture::ARMCpuContext::ToString(void) const
 {
   std::string CPSR = "";
   CPSR += (m_Context.CPSR & ARM_CSPR_N) ? "N" : "n";
   CPSR += (m_Context.CPSR & ARM_CSPR_Z) ? "Z" : "z";
   CPSR += (m_Context.CPSR & ARM_CSPR_C) ? "C" : "c";
-  CPSR += (m_Context.CPSR & ARM_CSPR_O) ? "O" : "o";
+  CPSR += (m_Context.CPSR & ARM_CSPR_V) ? "V" : "v";
   CPSR += (m_Context.CPSR & ARM_CSPR_T) ? "T" : "t";
 
   return (boost::format(
@@ -240,6 +297,11 @@ u16 ArmArchitecture::ARMCpuContext::GetRegisterOffset(u32 Register)
 
 void ArmArchitecture::ARMCpuContext::GetRegisters(CpuContext::RegisterList& RegList) const
 {
+  RegList.push_back(ARM_FlNf);
+  RegList.push_back(ARM_FlCf);
+  RegList.push_back(ARM_FlVf);
+  RegList.push_back(ARM_FlZf);
+
   RegList.push_back(ARM_RegR0);
   RegList.push_back(ARM_RegR1);
   RegList.push_back(ARM_RegR2);
@@ -317,28 +379,51 @@ public:
 
     m_rPrintData.AppendSpace().AppendOperator("}");
 
-    return nullptr;
+    return spVecIdExpr;
   }
 
   virtual Expression::SPType VisitBinaryOperation(BinaryOperationExpression::SPType spBinOpExpr)
   {
-    spBinOpExpr->GetLeftExpression()->Visit(this);
-    m_rPrintData.AppendSpace().AppendOperator(std::static_pointer_cast<OperationExpression>(spBinOpExpr)->ToString()).AppendSpace();
-    spBinOpExpr->GetRightExpression()->Visit(this);
-    return nullptr;
+    if (spBinOpExpr->GetLeftExpression()->Visit(this) == nullptr)
+      return nullptr;
+    char const* pOpTok = "???";
+    switch (spBinOpExpr->GetOperation())
+    {
+    default: break;
+    case OperationExpression::OpAnd:  pOpTok = "&";   break;
+    case OperationExpression::OpOr:   pOpTok = "|";   break;
+    case OperationExpression::OpXor:  pOpTok = "^";   break;
+    case OperationExpression::OpLls:  pOpTok = "LSL"; break;
+    case OperationExpression::OpLrs:  pOpTok = "LSR"; break;
+    case OperationExpression::OpArs:  pOpTok = "ASR"; break;
+    case OperationExpression::OpRol:  pOpTok = "ROL"; break;
+    case OperationExpression::OpRor:  pOpTok = "ROR"; break;
+    case OperationExpression::OpAdd:  pOpTok = "+";   break;
+    case OperationExpression::OpSub:  pOpTok = "-";   break;
+    case OperationExpression::OpMul:  pOpTok = "*";   break;
+    case OperationExpression::OpSDiv:
+    case OperationExpression::OpUDiv: pOpTok = "/";   break;
+    case OperationExpression::OpSMod:
+    case OperationExpression::OpUMod: pOpTok = "%";   break;
+    }
+    m_rPrintData.AppendSpace().AppendOperator(pOpTok).AppendSpace();
+    if (spBinOpExpr->GetRightExpression()->Visit(this) == nullptr)
+      return nullptr;
+    return spBinOpExpr;
   }
-  virtual Expression::SPType VisitConstant(ConstantExpression::SPType spConstExpr)
+
+  virtual Expression::SPType VisitBitVector(BitVectorExpression::SPType spConstExpr)
   {
-    Address const OprdAddr(spConstExpr->GetConstant());
+    Address const OprdAddr(spConstExpr->GetInt().ConvertTo<TOffset>());
     auto OprdLbl = m_rDoc.GetLabelFromAddress(OprdAddr);
     if (OprdLbl.GetType() != Label::Unknown)
     {
       m_rPrintData.AppendLabel(OprdLbl.GetLabel());
-      return nullptr;
+      return spConstExpr;
     }
 
-    m_rPrintData.AppendImmediate(spConstExpr->GetConstant(), spConstExpr->GetSizeInBit());
-    return nullptr;
+    m_rPrintData.AppendImmediate(spConstExpr->GetInt());
+    return spConstExpr;
   }
 
   virtual Expression::SPType VisitIdentifier(IdentifierExpression::SPType spIdExpr)
@@ -349,7 +434,7 @@ public:
     if (IdName == nullptr)
       return nullptr;
     m_rPrintData.AppendRegister(IdName);
-    return nullptr;
+    return spIdExpr;
   }
 
   virtual Expression::SPType VisitMemory(MemoryExpression::SPType spMemExpr)
@@ -358,7 +443,7 @@ public:
     auto spOff = spMemExpr->GetOffsetExpression();
     spOff->Visit(this);
     m_rPrintData.AppendOperator("]");
-    return nullptr;
+    return spMemExpr;
   }
 
 private:
@@ -390,7 +475,7 @@ bool ArmArchitecture::FormatOperand(
     if (spEvalRes != nullptr)
       spCurOprd = spEvalRes;
 
-    if (EvalVst.IsRelative() && EvalVst.IsMemoryReference())
+    if (spEvalRes != nullptr && EvalVst.IsRelative() && EvalVst.IsMemoryReference())
       rPrintData.AppendOperator("=");
   }
 
@@ -438,5 +523,22 @@ bool ArmArchitecture::FormatInstruction(
     }
   }
 
+  return true;
+}
+
+bool ArmArchitecture::HandleExpression(Expression::LSPType & rExprs, std::string const& rName, Instruction& rInsn, Expression::SPType spResExpr)
+{
+  return false;
+}
+
+bool ArmArchitecture::EmitSetExecutionAddress(Expression::VSPType& rExprs, Address const& rAddr, u8 Mode)
+{
+  u32 Id = m_CpuInfo.GetRegisterByType(CpuInformation::ProgramPointerRegister, Mode);
+  if (Id == 0)
+    return false;
+  u32 IdSz = m_CpuInfo.GetSizeOfRegisterInBit(Id);
+  if (IdSz == 0)
+    return false;
+  rExprs.push_back(Expr::MakeAssign(Expr::MakeId(Id, &m_CpuInfo), Expr::MakeBitVector(IdSz, rAddr.GetOffset())));
   return true;
 }

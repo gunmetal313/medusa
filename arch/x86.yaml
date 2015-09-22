@@ -1,7 +1,7 @@
 #
 ## Description ################################################################
-# This yaml file tries do detail all x86 instruction.
-# It's used by Medusa to generate c++ code in order to disassemble x86
+# This yaml file tries to detail all x86 instructions.
+# It's used by Medusa to generate C++ code in order to disassemble x86
 # executable.
 # Check out http://github.com/wisk/medusa for further information.
 
@@ -10,160 +10,828 @@ architecture_information:
   name: x86
   instruction_set_type: complex
 
+## Flag semantic #######################################################
+
+function:
+
+## Standard flags operations
+  sign_flag: &sign_flag |
+    sf.id = bit_cast(res.val >> (int(op0.bit, op0.bit) - int(op0.bit, 1)), int1(1));
+
+  zero_flag: &zero_flag |
+    zf.id = ite(res.val == int(op0.bit, 0), int1(1), int1(0))
+
+  adjust_flag: &adjust_flag |
+    af.id = bit_cast((op0.val ^ op1.val ^ res.val) >> (int(op0.bit, 4)), int1(1));
+
+  parity_flag: &parity_flag |
+    alloc_var('pf_tmp', pf.bit);
+    pf_tmp = int1(1);
+    pf_tmp ^= bit_cast(res.val >> int(op0.bit, 0), int1(1));
+    pf_tmp ^= bit_cast(res.val >> int(op0.bit, 1), int1(1));
+    pf_tmp ^= bit_cast(res.val >> int(op0.bit, 2), int1(1));
+    pf_tmp ^= bit_cast(res.val >> int(op0.bit, 3), int1(1));
+    pf_tmp ^= bit_cast(res.val >> int(op0.bit, 4), int1(1));
+    pf_tmp ^= bit_cast(res.val >> int(op0.bit, 5), int1(1));
+    pf_tmp ^= bit_cast(res.val >> int(op0.bit, 6), int1(1));
+    pf_tmp ^= bit_cast(res.val >> int(op0.bit, 7), int1(1));
+    pf.id = pf_tmp;
+    free_var('pf_tmp');
+
+  overflow_flag_add: &overflow_flag_add |
+    of.id = bit_cast(((op0.val ^ res.val) & (~(op0.val ^ op1.val))) >> (int(op0.bit, op0.bit) - int(op0.bit, 1)), int1(1));
+
+  carry_flag_add: &carry_flag_add |
+    cf.id = bit_cast(((op0.val & op1.val) ^ ((op0.val ^ op1.val ^ res.val) & (op0.val ^ op1.val))) >> (int(op0.bit, op0.bit) - int(op0.bit, 1)), int1(1));
+
+  overflow_flag_sub: &overflow_flag_sub |
+    of.id = bit_cast(((op0.val ^ res.val) & (op0.val ^ op1.val)) >> (int(op0.bit, op0.bit) - int(op0.bit, 1)), int1(1));
+
+  carry_flag_sub: &carry_flag_sub |
+    cf.id = bit_cast(((op0.val ^ op1.val ^ res.val) ^ ((op0.val ^ res.val) & (op0.val ^ op1.val))) >> (int(op0.bit, op0.bit) - int(op0.bit, 1)), int1(1));
+
+## Useful functions
+  count_mask: &count_mask |
+    if __expr and int(op0.bit, op0.bit) == int(op0.bit, 64):
+      count = count & int(op0.bit, 0x3f)
+    else:
+      count = count & int(op0.bit, 0x1f);
+
+## String functions
+
+  scan_string: &scan_string |
+    alloc_var('res', op0.bit);
+    res = op0.val - op1.val;
+    call('overflow_flag_sub');
+    call('carry_flag_sub');
+    call('sign_flag');
+    call('zero_flag');
+    call('parity_flag');
+    call('adjust_flag');
+    if __expr and df.id == int1(1):
+      op1.offset -= int(op1.offset.bit, op1.byte)
+    else:
+      op1.offset += int(op1.offset.bit, op1.byte);
+    free_var('res');
+
+  store_string: &store_string |
+    op1.val = op0.val;
+    if __expr and df.id == int1(1):
+      op1.offset -= int(op1.offset.bit, op1.byte)
+    else:
+      op1.offset += int(op1.offset.bit, op1.byte);
+
+  move_string: &move_string |
+    op1.val = op0.val;
+    if __expr and df.id == int1(1):
+      op0.offset -= int(op0.offset.bit, op0.byte)
+      op1.offset -= int(op1.offset.bit, op1.byte)
+    else:
+      op0.offset += int(op0.offset.bit, op0.byte)
+      op1.offset += int(op1.offset.bit, op1.byte);
+
+  compare_string: &compare_string |
+    alloc_var('res', op0.bit);
+    res = op0.val - op1.val;
+    call('overflow_flag_sub');
+    call('carry_flag_sub');
+    call('sign_flag');
+    call('zero_flag');
+    call('parity_flag');
+    call('adjust_flag');
+    if __expr and df.id == int1(1):
+      op0.offset -= int(op0.offset.bit, op0.byte)
+      op1.offset -= int(op1.offset.bit, op1.byte)
+    else:
+      op0.offset += int(op0.offset.bit, op0.byte)
+      op1.offset += int(op1.offset.bit, op1.byte);
+    free_var('res');
+
 ## Instruction semantic #######################################################
 
 semantic:
 
-## Arimethic / Logical operations
-  add: &add
-    [ expr('begin_update_flags'), res = op0.val + op1.val, expr('end_update_flags'), op0.val = res ]
+## Arithmetic / Logical operations
+  add: &add |
+    alloc_var('res', op0.bit);
+    res.val = op0.val + op1.val;
+    call('overflow_flag_add');
+    call('carry_flag_add');
+    call('sign_flag');
+    call('zero_flag');
+    call('parity_flag');
+    call('adjust_flag');
+    op0.val = res.val;
+    free_var('res');
 
-  adc: &adc
-    [ "expr('begin_update_flags')", "if cf.id == int1(1): op0.val = op0.val + int(op0.bit, 1)", "res = op0.val + op1.val", "expr('end_update_flags')", "op0.val = res" ]
+  addss: &addss |
+    alloc_var('tmp0', 32);
+    alloc_var('tmp1', 32);
+    alloc_var('tmp_val', op0.bit);
+    tmp0.val = bit_cast(op0.val, int_type32);
+    tmp1.val = bit_cast(op1.val, int_type32);
+    tmp_val = op0.val >> int(op0.bit, 32);
+    tmp_val = tmp_val << int(op0.bit, 32);
+    tmp_val += add_float(tmp0.val, tmp1.val);
+    op0.val = tmp_val;
+    free_var('tmp_val');
+    free_var('tmp1');
+    free_var('tmp0');
 
-  inc: &inc
-    [ expr('begin_update_flags'), 'res = op0.val + int(op0.bit, 1)', expr('end_update_flags'), op0.val = res ]
+  aaa: &aaa |
+    alloc_var('cond', 1);
+    cond = int1(0);
+    if __expr and ((al.id & int(al.bit, 0x0f)) > int(al.bit, 9)): cond |= int1(1);
+    if __expr and af.id == int1(1): cond |= int1(1);
+    if __expr and cond == int1(1):
+      ax.id += int(ax.bit, 0x106)
+      af.id = int1(1)
+      cf.id = int1(1)
+    else:
+      af.id = int1(0)
+      cf.id = int1(0);
+    al.id &= int(al.bit, 0x0f);
+    free_var('cond');
 
-  and: &and
-    [ expr('begin_update_flags'), res = op0.val & op1.val, expr('end_update_flags'), op0.val = res ]
+  aad: &aad |
+    alloc_var('tmp_al', al.bit);
+    alloc_var('tmp_ah', ah.bit);
+    alloc_var('pf_tmp', pf.bit);
+    tmp_al = al.id;
+    tmp_ah = ah.id;
+    al.id = (tmp_al + (tmp_ah * op0.val)) & int(al.bit, 0xff);
+    ah.id = int(ah.bit, 0);
+    # Start updating ZF
+    if __expr and al.id == int(al.bit, 0): zf.id = int1(1)
+    else: zf.id = int1(0);
+    # Start updating SF
+    sf.id = bit_cast(al.id >> (int(al.bit, al.bit) - int(al.bit, 1)), int1(1));
+    # Start updating PF
+    pf_tmp = int1(1);
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 0), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 1), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 2), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 3), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 4), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 5), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 6), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 7), int1(1));
+    pf.id = pf_tmp;
+    free_var('pf_tmp');
+    free_var('tmp_ah');
+    free_var('tmp_al');
 
-  or: &or
-    [ expr('begin_update_flags'), res = op0.val | op1.val, expr('end_update_flags'), op0.val = res ]
+  aam: &aam |
+    alloc_var('tmp_al', al.bit);
+    alloc_var('pf_tmp', pf.bit);
+    tmp_al = al.id;
+    ah.id = tmp_al / op0.val;
+    al.id = tmp_al % op0.val;
+    # Start updating ZF
+    if __expr and al.id == int(al.bit, 0): zf.id = int1(1)
+    else: zf.id = int1(0);
+    # Start updating SF
+    sf.id = bit_cast(al.id >> (int(al.bit, al.bit) - int(al.bit, 1)), int1(1));
+    # Start updating PF
+    pf_tmp = int1(1);
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 0), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 1), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 2), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 3), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 4), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 5), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 6), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 7), int1(1));
+    pf.id = pf_tmp;
+    free_var('pf_tmp');
+    free_var('tmp_al');
 
-  xor: &xor
-    [ expr('begin_update_flags'), res = op0.val ^ op1.val, expr('end_update_flags'), op0.val = res ]
+  aas: &aas |
+    alloc_var('cond', 1);
+    cond = int1(0);
+    if __expr and ((al.id & int(al.bit, 0x0f)) > int(al.bit, 9)): cond |= int1(1)
+    if __expr and af.id == int1(1): cond |= int1(1);
+    if __expr and cond == int1(1):
+      ax.id -= int(ax.bit, 0x6)
+      ah.id -= int(ah.bit, 1)
+      af.id = int1(1)
+      cf.id = int1(1)
+    else:
+      cf.id = int1(0)
+      af.id = int1(0);
+    al.id &= int(al.bit, 0x0f);
+    free_var('cond');
 
-  sub: &sub
-    [ expr('begin_update_flags'), res = op0.val - op1.val, expr('end_update_flags'), op0.val = res ]
+  adc: &adc |
+    alloc_var('res', op0.bit);
+    res.val = op0.val + op1.val + bit_cast(cf.id, int(op0.bit, op0.bit));
+    call('overflow_flag_add');
+    call('carry_flag_add');
+    call('sign_flag');
+    call('zero_flag');
+    call('parity_flag');
+    call('adjust_flag');
+    op0.val = res.val;
+    free_var('res');
 
-  sbb: &sbb
-    [ "expr('begin_update_flags')", "if cf.id == int1(1): op0.val = op0.val - int(op0.bit, 1)", "res = op0.val - op1.val - cf.id", "expr('end_update_flags')", "op0.val = res" ]
+  daa: &daa |
+    alloc_var('old_al', al.bit);
+    alloc_var('old_cf', 1);
+    alloc_var('cond', 1);
+    alloc_var('pf_tmp', pf.bit);
+    old_cf = cf.id;
+    old_al = al.id;
+    cf.id = int1(0);
+    cond = int1(0);
+    if __expr and (al.id & int(al.bit, 0x0f)) > int(al.bit, 9): cond |= int1(1);
+    if __expr and af.id == int1(1): cond |= int1(1);
+    if __expr and cond == int1(1):
+      if __expr and al.id > int(al.bit, 0xf9): cf.id = int1(1)
+      else: cf.id = old_cf
+      al.id += int(al.bit, 0x6)
+      af.id = int1(1)
+    else:
+      af.id = int1(0);
+    cond = int1(0);
+    if __expr and old_al > int(al.bit, 0x99): cond |= int1(1);
+    if __expr and old_cf == int1(1): cond |= int1(1);
+    if __expr and cond == int1(1):
+      al.id += int(al.bit, 0x60)
+      cf.id = int1(1)
+    else:
+      cf.id = int1(0);
+    # Start updating ZF
+    if __expr and al.id == int(al.bit, 0): zf.id = int1(1)
+    else: zf.id = int1(0);
+    # Start updating SF
+    sf.id = bit_cast(al.id >> (int(al.bit, al.bit) - int(al.bit, 1)), int1(1));
+    # Start updating PF
+    pf_tmp = int1(1);
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 0), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 1), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 2), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 3), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 4), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 5), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 6), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 7), int1(1));
+    pf.id = pf_tmp;
+    free_var('pf_tmp');
+    free_var('cond');
+    free_var('old_cf');
+    free_var('old_al');
 
-  dec: &dec
-    [ expr('begin_update_flags'), 'res = op0.val - int(op0.bit, 1)', expr('end_update_flags'), op0.val = res ]
+  das: &das |
+    alloc_var('old_al', al.bit);
+    alloc_var('old_cf', 1);
+    alloc_var('cond', 1);
+    alloc_var('pf_tmp', pf.bit);
+    old_cf = cf.id;
+    old_al = al.id;
+    cf.id = int1(0);
+    cond = int1(0);
+    if __expr and (al.id & int(al.bit, 0x0f)) > int(al.bit, 9): cond |= int1(1);
+    if __expr and af.id == int1(1): cond |= int1(1);
+    if __expr and cond == int1(1):
+      if __expr and int(al.bit, 0x6) > al.id: cf.id = int1(1)
+      else: cf.id = old_cf
+      al.id -= int(al.bit, 0x6)
+      af.id = int1(1)
+    else:
+      af.id = int1(0);
+    cond = int1(0);
+    if __expr and old_al > int(al.bit, 0x99): cond |= int1(1);
+    if __expr and old_cf == int1(1): cond |= int1(1);
+    if __expr and cond == int1(1):
+      al.id -= int(al.bit, 0x60)
+      cf.id = int1(1);
+    # Start updating ZF
+    if __expr and al.id == int(al.bit, 0): zf.id = int1(1)
+    else: zf.id = int1(0);
+    # Start updating SF
+    sf.id = bit_cast(al.id >> (int(al.bit, al.bit) - int(al.bit, 1)), int1(1));
+    # Start updating PF
+    pf_tmp = int1(1);
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 0), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 1), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 2), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 3), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 4), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 5), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 6), int1(1));
+    pf_tmp ^= bit_cast(al.id >> int(al.bit, 7), int1(1));
+    pf.id = pf_tmp;
+    free_var('pf_tmp');
+    free_var('cond');
+    free_var('old_cf');
+    free_var('old_al');
 
-  neg: &neg
-    [ expr('begin_update_flags'), 'res = int(op0.bit, 0) - op0.val', expr('end_update_flags'), op0.val = res ]
+  inc: &inc |
+    alloc_var('op1', op0.bit);
+    alloc_var('res', op0.bit);
+    op1.val = int(op0.bit, 1);
+    res.val = op0.val + op1.val;
+    call('overflow_flag_add');
+    call('sign_flag');
+    call('zero_flag');
+    call('parity_flag');
+    call('adjust_flag');
+    op0.val = res.val;
+    free_var('op1');
+    free_var('res');
 
-  imul1: &imul1
-    [ 'res = acc.id * op0.val', op0.val = res ]
+  and: &and |
+    alloc_var('res', op0.bit);
+    res = op0.val & op1.val;
+    of.id = int1(0)
+    cf.id = int1(0)
+    call('sign_flag')
+    call('zero_flag')
+    call('parity_flag')
+    op0.val = res;
+    free_var('res');
 
-  imul2: &imul2
-    [ 'res = op0.val * op1.val', op0.val = res ]
+  or: &or |
+    alloc_var('res', op0.bit);
+    res = op0.val | op1.val;
+    of.id = int1(0)
+    cf.id = int1(0)
+    call('sign_flag')
+    call('zero_flag')
+    call('parity_flag')
+    op0.val = res;
+    free_var('res');
 
-  # http://x86.renejeschke.de/html/file_module_x86_id_138.html
-  imul3: &imul3
-    [ 'res = op1.val * op2.val', op0.val = res ]
+  xor: &xor |
+    alloc_var('res', op0.bit);
+    res = op0.val ^ op1.val;
+    of.id = int1(0)
+    cf.id = int1(0)
+    call('sign_flag')
+    call('zero_flag')
+    call('parity_flag')
+    op0.val = res;
+    free_var('res');
 
-  mul: &mul
-    [ ]
+  xorps: &xorps |
+    op0.val ^= op1.val;
 
-  idiv: &idiv
-    [ ]
+  sub: &sub |
+    alloc_var('res', op0.bit);
+    res = op0.val - op1.val;
+    call('overflow_flag_sub');
+    call('carry_flag_sub');
+    call('sign_flag');
+    call('zero_flag');
+    call('parity_flag');
+    call('adjust_flag');
+    op0.val = res;
+    free_var('res');
 
-  div: &div
-    [ 'res = acc.id / op0.val', acc.id = res ]
+  sbb: &sbb |
+    alloc_var('res', op0.bit);
+    res = op0.val - op1.val - bit_cast(cf.id, int(op0.bit, op0.bit));
+    call('overflow_flag_sub');
+    call('carry_flag_sub');
+    call('sign_flag');
+    call('zero_flag');
+    call('parity_flag');
+    call('adjust_flag');
+    op0.val = res.val;
+    free_var('res');
 
-  not: &not
-    [ expr('begin_update_flags'), 'res = op0.val ^ int(op0.bit, -1)', expr('end_update_flags'), op0.val = res ]
+  dec: &dec |
+    alloc_var('res', op0.bit);
+    alloc_var('op1', op0.bit);
+    op1 = int(op0.bit, 1);
+    res = op0.val - op1;
+    call('overflow_flag_sub');
+    call('sign_flag');
+    call('zero_flag');
+    call('parity_flag');
+    call('adjust_flag');
+    op0.val = res;
+    free_var('res');
 
-  bswap: &bswap
-    [ res = swap(op0.val), op0 = res ]
+  neg: &neg |
+    alloc_var('res', op0.bit);
+    if __expr and op0.val == int(op0.bit, 0):
+      cf.id = int1(0)
+    else:
+      cf.id = int1(1);
+    res = -op0.val;
+    of.id = bit_cast((res.val & op0.val) >> (int(op0.bit, op0.bit) - int(op0.bit, 1)), int1(1));
+    call('sign_flag');
+    call('zero_flag');
+    call('parity_flag');
+    af.id = bit_cast((op0.val ^ res.val) >> (int(op0.bit, 4)), int1(1));
+    op0.val = res;
+    free_var('res');
 
-  # TODO(KS): update flags
-  shld: &shld
-    [
-      expr('begin_update_flags'),
-      'op0.val = ( (op0.val << op2.val) | (op1.val >> (int(op0.bit, op0.bit) - op2.val) ) )',
-      res = op0.val,
-      expr('end_update_flags')
-     ]
-
-  shrd: &shrd
-    [
-      expr('begin_update_flags'),
-      'op0.val = ( (op0.val >> op2.val) | (op1.val << (int(op2.bit, op0.bit) - op2.val)) )',
-      res = op0.val,
-      expr('end_update_flags')
-    ]
-
-  shl: &shl
-    [
-      expr('begin_update_flags'),
-      res = op0.val << op1.val,
-      expr('end_update_flags'),
-      op0.val = res
-    ]
-
-  shr: &shr
-    [
-      expr('begin_update_flags'),
-      res = op0.val >> op1.val,
-      expr('end_update_flags'),
-      op0.val = res
-    ]
-
-  # FIXME: Handle sign extension
-  sal: &sal
-    [ op0.val = op0.val << op1.val ]
-
-  sar: &sar
-    [ op0.val = op0.val >> op1.val ]
-
-  rol: &rol
-    [
-      expr('begin_update_flags'),
-      'res = ((op0.val << op1.val) | (op0.val >> (int(op0.bit, op0.bit) - op1.val)))',
-      expr('end_update_flags'),
-      op0.val = res
-     ]
-
-  ror: &ror
-    [
-      expr('begin_update_flags'),
-      'res = ((op0.val >> op1.val) | (op0.val << (int(op0.bit, op0.bit) - op1.val)))',
-      expr('end_update_flags'),
-      op0.val = res
-    ]
-
-  # HACK(KS): we use of as a temporary register...
-  rcl: &rcl
-    [
-      "if op1.val != int(op1.bit, 0):\n\tres = ( (op0.val << op1.val) | (op0.val >> (int(op0.bit, op0.bit) - op1.val + int(op0.bit, 1))) | (cf.id << (op1 - int(op0.bit, 1))) )\n\tof.id = ((op0.val << (op1.val - int(op1.bit, 1))) >> (int(op1.bit, op0.bit) - int(op1.bit, 1)))",
-      op0.val = res,
-      cf.id = of.id,
+  imul1: &imul1 |
+    alloc_var('res', op0.bit);
+    alloc_var('mul_res', concat(op0.bit, ignore(' * 2')));
+    alloc_var('extended', concat(op0.bit, ignore(' * 2')));
+    if __code and is_byte_operation:
+      mul_res = sign_extend(al.id, int_type16) * sign_extend(op0.val, int_type16)
+      ax.id = bit_cast(mul_res, int_type16)
+      sf.id = bit_cast(mul_res >> int(16, 7), int_type1);
+    if __code and is_word_operation:
+      mul_res = sign_extend(ax.id, int_type32) * sign_extend(op0.val, int_type32)
+      ax.id = bit_cast(mul_res, int_type16)
+      dx.id = bit_cast(mul_res >> int(32, 16), int_type16)
+      sf.id = bit_cast(mul_res >> int(32, 15), int_type1);
+    if __code and is_dword_operation:
+      mul_res = sign_extend(eax.id, int_type64) * sign_extend(op0.val, int_type64)
+      eax.id = bit_cast(mul_res, int_type32)
+      edx.id = bit_cast(mul_res >> int(64, 32), int_type32)
+      sf.id = bit_cast(mul_res >> int(64, 32), int_type1);
+    if __code and is_qword_operation:
+      mul_res = sign_extend(rax.id, int_type128) * sign_extend(op0.val, int_type128)
+      rax.id = bit_cast(mul_res, int_type64)
+      rdx.id = bit_cast(mul_res >> int(128, 64), int_type64)
+      sf.id = bit_cast(mul_res >> int(128, 63), int_type1);
+    res = bit_cast(mul_res, int_type(op0.bit));
+    extended = sign_extend(res, int_type(concat(op0.bit, ignore(' * 2'))));
+    if __expr and extended == mul_res:
       of.id = int1(0)
-    ]
+      cf.id = int1(0)
+    else:
+      of.id = int1(1)
+      cf.id = int1(1);
+    free_var('extended');
+    free_var('mul_res');
+    free_var('res');
 
-  # HACK(KS): we use of as a temporary register...
-  rcr: &rcr
-    [
-      "if op1.val != int(op1.bit, 0):\n\tres = ( (op0.val >> (op1.val % (int(op0.bit, op0.bit)) )) | ( op0.val << (int(op0.bit, op0.bit) - (op1.val % (int(op0.bit, op0.bit)) ) + int(op0.bit, 1)) ) | (cf.id << (int(op0.bit, op0.bit) - (op1.val % (int(op0.bit, op0.bit)) ))) )\n\tof.id = (op0.val >> ((op1.val % (int(op0.bit, op0.bit)) ) - int(op1.bit, 1)))",
-      op0.val = res,
-      cf.id = of.id,
+  imul2: &imul2 |
+    alloc_var('res', op0.bit);
+    alloc_var('mul_res', concat(op0.bit, ignore(' * 2')));
+    alloc_var('extended', concat(op0.bit, ignore(' * 2')));
+    mul_res = sign_extend(op0.val, int_type(concat(op0.bit, ignore(' * 2')))) * sign_extend(op1.val, int_type(concat(op0.bit, ignore(' * 2'))));
+    res = bit_cast(mul_res, int_type(op0.bit));
+    call('sign_flag');
+    extended = sign_extend(res, int_type(concat(op0.bit, ignore(' * 2'))));
+    if __expr and extended == mul_res:
       of.id = int1(0)
-    ]
+      cf.id = int1(0)
+    else:
+      of.id = int1(1)
+      cf.id = int1(1);
+    op0.val = res;
+    free_var('extended');
+    free_var('mul_res');
+    free_var('res');
 
-  # TODO(KS): update flags
-  xadd: &xadd
-    [
-      expr('begin_update_flags'),
-      'exchange(op0.val, op1.val)',
-      res = op1.val + op0.val,
-      expr('end_update_flags'),
-      op0.val = res
-      ]
+  imul3: &imul3 |
+    alloc_var('res', op0.bit);
+    alloc_var('mul_res', concat(op0.bit, ignore(' * 2')));
+    alloc_var('extended', concat(op0.bit, ignore(' * 2')));
+    mul_res = sign_extend(op1.val, int_type(concat(op0.bit, ignore(' * 2')))) * sign_extend(op2.val, int_type(concat(op0.bit, ignore(' * 2'))));
+    res = bit_cast(mul_res, int_type(op0.bit));
+    call('sign_flag');
+    extended = sign_extend(res, int_type(concat(op0.bit, ignore(' * 2'))));
+    if __expr and extended == mul_res:
+      of.id = int1(0)
+      cf.id = int1(0)
+    else:
+      of.id = int1(1)
+      cf.id = int1(1);
+    op0.val = res;
+    free_var('extended');
+    free_var('mul_res');
+    free_var('res');
+
+  mul: &mul |
+    alloc_var('upper_res', op0.bit);
+    alloc_var('mul_res', concat(op0.bit, ignore(' * 2')));
+    if __code and is_byte_operation:
+      ax.id = bit_cast(bit_cast(al.id, int_type16) * bit_cast(op0.val, int_type16), int_type16)
+      upper_res = ah.id;
+    if __code and is_word_operation:
+      mul_res = bit_cast(bit_cast(ax.id, int_type32) * bit_cast(op0.val, int_type32), int_type32)
+      ax.id = bit_cast(mul_res, int_type16)
+      dx.id = bit_cast(mul_res >> int(32, 16), int_type16)
+      upper_res = dx.id;
+    if __code and is_dword_operation:
+      mul_res = bit_cast(bit_cast(eax.id, int_type64) * bit_cast(op0.val, int_type64), int_type64)
+      eax.id = bit_cast(mul_res, int_type32)
+      edx.id = bit_cast(mul_res >> int(64, 32), int_type32)
+      upper_res = edx.id;
+    if __code and is_qword_operation:
+      mul_res = bit_cast(bit_cast(rax.id, int_type128) * bit_cast(op0.val, int_type128), int_type128)
+      rax.id = bit_cast(mul_res, int_type64)
+      rdx.id = bit_cast(mul_res >> int(128, 64), int_type64)
+      upper_res = rdx.id;
+    if __expr and upper_res == int(op0.bit, 0):
+      of.id = int1(0)
+      cf.id = int1(0)
+    else:
+      of.id = int1(1)
+      cf.id = int1(1);
+    free_var('mul_res');
+    free_var('upper_res');
+
+  idiv: &idiv |
+    alloc_var('dividend', concat(op0.bit, ignore(' * 2')));
+    alloc_var('extended', concat(op0.bit, ignore(' * 2')));
+    extended = sign_extend(op0.val, int_type(concat(op0.bit, ignore(' * 2'))));
+    if __code and is_byte_operation:
+      dividend = sign_extend(ax.id, int_type16)
+      al.id = bit_cast(sdiv(dividend, extended), int_type8)
+      ah.id = bit_cast(smod(dividend, extended), int_type8);
+    if __code and is_word_operation:
+      dividend = sign_extend(dx.id, int_type32) << int(32, 16) | sign_extend(ax.id, int_type32)
+      ax.id = bit_cast(sdiv(dividend, extended), int_type16)
+      dx.id = bit_cast(smod(dividend, extended), int_type16);
+    if __code and is_dword_operation:
+      dividend = sign_extend(edx.id, int_type64) << int(64, 32) | sign_extend(eax.id, int_type64)
+      eax.id = bit_cast(sdiv(dividend, extended), int_type32)
+      edx.id = bit_cast(smod(dividend, extended), int_type32);
+    if __code and is_qword_operation:
+      dividend = sign_extend(rdx.id, int_type128) << int(128, 64) | sign_extend(rax.id, int_type128)
+      rax.id = bit_cast(sdiv(dividend, extended), int_type64)
+      rdx.id = bit_cast(smod(dividend, extended), int_type64);
+    free_var('extended');
+    free_var('dividend');
+
+  div: &div |
+    alloc_var('dividend', concat(op0.bit, ignore(' * 2')));
+    if __code and is_byte_operation:
+      dividend = bit_cast(ax.id, int_type16)
+      al.id = bit_cast(dividend / zero_extend(op0.val, int_type16), int_type8)
+      ah.id = bit_cast(dividend % zero_extend(op0.val, int_type16), int_type8);
+    if __code and is_word_operation:
+      dividend = bit_cast(dx.id, int_type32) << int(32, 16) | bit_cast(ax.id, int_type32)
+      ax.id = bit_cast(dividend / zero_extend(op0.val, int_type32), int_type16)
+      dx.id = bit_cast(dividend % zero_extend(op0.val, int_type32), int_type16);
+    if __code and is_dword_operation:
+      dividend = bit_cast(edx.id, int_type64) << int(64, 32) | bit_cast(eax.id, int_type64)
+      eax.id = bit_cast(dividend / zero_extend(op0.val, int_type64), int_type32)
+      edx.id = bit_cast(dividend % zero_extend(op0.val, int_type64), int_type32);
+    if __code and is_qword_operation:
+      dividend = bit_cast(rdx.id, int_type128) << int(128, 64) | bit_cast(rax.id, int_type128)
+      rax.id = bit_cast(dividend / zero_extend(op0.val, int_type128), int_type64)
+      rdx.id = bit_cast(dividend % zero_extend(op0.val, int_type128), int_type64);
+    free_var('dividend');
+
+  not: &not |
+    alloc_var('res', op0.bit);
+    res = ~op0.val;
+    op0.val = res;
+    free_var('res');
+
+  bswap: &bswap |
+    if __expr and int(op0.bit, op0.bit) == int(op0.bit, 16): # Handle undefined processor state on 16-bit
+      op0.val = int(op0.bit, 0)
+    else:
+      op0.val = swap(op0.val);
+
+  shld: &shld |
+    alloc_var('res', op0.bit);
+    alloc_var('count', op0.bit);
+    alloc_var('sign_saved', 1);
+    sign_saved = bit_cast(op0.val >> (int(op0.bit, op0.bit) - int(op0.bit, 1)), int1(1));
+    count = bit_cast(op2.val, int(op0.bit, op0.bit));
+    call('count_mask');
+    res = ((op0.val << count) | (op1.val >> (int(op0.bit, op0.bit) - count)));
+    if __expr and count != int(op0.bit, 0):
+      cf.id = bit_cast(op0.val >> (int(op0.bit, op0.bit) - count), int1(1))
+      call('sign_flag')
+      call('zero_flag')
+      call('parity_flag');
+    if __expr and count == int(op0.bit, 1):
+      of.id = sf.id ^ sign_saved;
+    op0.val = res;
+    free_var('sign_saved');
+    free_var('count');
+    free_var('res');
+
+  shrd: &shrd |
+    alloc_var('res', op0.bit);
+    alloc_var('count', op0.bit);
+    alloc_var('sign_saved', 1);
+    sign_saved = bit_cast(op0.val >> (int(op0.bit, op0.bit) - int(op0.bit, 1)), int1(1));
+    count = bit_cast(op2.val, int(op0.bit, op0.bit));
+    call('count_mask');
+    res = ((op0.val >> count) | (op1.val << (int(op0.bit, op0.bit) - count)));
+    if __expr and count != int(op0.bit, 0):
+      cf.id = bit_cast(op0.val >> (count - int(op0.bit, 1)), int1(1))
+      call('sign_flag')
+      call('zero_flag')
+      call('parity_flag');
+    if __expr and count == int(op0.bit, 1):
+      of.id = sf.id ^ sign_saved;
+    op0.val = res;
+    free_var('sign_saved');
+    free_var('count');
+    free_var('res');
+
+  shl: &shl |
+    alloc_var('res', op0.bit);
+    alloc_var('count', op0.bit);
+    count = bit_cast(op1.val, int(op0.bit, op0.bit));
+    call('count_mask');
+    res = op0.val << count;
+    if __expr and count != int(op0.bit, 0):
+      cf.id = bit_cast(op0.val >> (int(op0.bit, op0.bit) - count), int1(1))
+      call('sign_flag')
+      call('zero_flag')
+      call('parity_flag');
+    if __expr and count == int(op0.bit, 1):
+      of.id = bit_cast((op0.val >> (int(op0.bit, op0.bit) - int(op0.bit, 1))) ^ (op0.val >> (int(op0.bit, op0.bit) - int(op0.bit, 2))), int1(1));
+    op0.val = res;
+    free_var('count');
+    free_var('res');
+
+  shr: &shr |
+    alloc_var('res', op0.bit);
+    alloc_var('count', op0.bit);
+    count = bit_cast(op1.val, int(op0.bit, op0.bit));
+    call('count_mask');
+    res = op0.val >> count;
+    if __expr and count != int(op0.bit, 0):
+      cf.id = bit_cast(op0.val >> (count - int(op0.bit, 1)), int1(1))
+      call('sign_flag')
+      call('zero_flag')
+      call('parity_flag');
+    if __expr and count == int(op0.bit, 1):
+      of.id = bit_cast((op0.val >> (int(op0.bit, op0.bit) - int(op0.bit, 1))), int1(1));
+    op0.val = res;
+    free_var('count');
+    free_var('res');
+
+  sal: &sal |
+    alloc_var('res', op0.bit);
+    alloc_var('count', op0.bit);
+    count = bit_cast(op1.val, int(op0.bit, op0.bit));
+    call('count_mask');
+    res = op0.val << count;
+    if __expr and count != int(op0.bit, 0):
+      cf.id = bit_cast(op0.val >> (int(op0.bit, op0.bit) - count), int1(1))
+      call('sign_flag')
+      call('zero_flag')
+      call('parity_flag');
+    if __expr and count == int(op0.bit, 1):
+      of.id = bit_cast((op0.val >> (int(op0.bit, op0.bit) - int(op0.bit, 1))) ^ (op0.val >> (int(op0.bit, op0.bit) - int(op0.bit, 2))), int1(1));
+    op0.val = res;
+    free_var('count');
+    free_var('res');
+
+  sar: &sar |
+    alloc_var('res', op0.bit);
+    alloc_var('count', op0.bit);
+    count = bit_cast(op1.val, int(op0.bit, op0.bit));
+    call('count_mask');
+    res = ars(op0.val, count);
+    if __expr and count != int(op0.bit, 0):
+      if __expr and count > int(op0.bit, op0.bit): cf.id = bit_cast(op0.val >> (int(op0.bit, op0.bit) - int(op0.bit, 1)), int1(1))
+      else: cf.id = bit_cast(op0.val >> (count - int(op0.bit, 1)), int1(1))
+      call('sign_flag')
+      call('zero_flag')
+      call('parity_flag');
+    if __expr and count == int(op0.bit, 1):
+      of.id = int1(0);
+    op0.val = res;
+    free_var('count');
+    free_var('res');
+
+  rol: &rol |
+    alloc_var('res', op0.bit);
+    alloc_var('count', op0.bit);
+    count = bit_cast(op1.val, int(op0.bit, op0.bit));
+    call('count_mask');
+    res = rol(op0.val, count);
+    if __expr and count != int(op0.bit, 0):
+      cf.id = bit_cast(res, int_type1);
+    if __expr and count == int(op0.bit, 1):
+      of.id = bit_cast(bit_cast(cf.id, int_type(op0.bit)) ^ (res >> (int(op0.bit,op0.bit) - int(op0.bit, 1))), int_type1);
+    op0.val = res;
+    free_var('count');
+    free_var('res');
+
+  ror: &ror |
+    alloc_var('res', op0.bit);
+    alloc_var('count', op0.bit);
+    count = bit_cast(op1.val, int_type(op0.bit));
+    call('count_mask');
+    res = ror(op0.val, count);
+    if __expr and count != int(op0.bit, 0):
+      cf.id = bit_cast(res >> (int(op0.bit, op0.bit) - int(op0.bit, 1)), int_type1);
+    if __expr and count == int(op0.bit, 1):
+      of.id = bit_cast((res >> (int(op0.bit, op0.bit) - int(op0.bit, 1))) ^ (res >> (int(op0.bit, op0.bit) - int(op0.bit, 2))), int_type1);
+    op0.val = res;
+    free_var('count');
+    free_var('res');
+
+  rcl: &rcl |
+    alloc_var('res', op0.bit);
+    alloc_var('count', op0.bit);
+    count = bit_cast(op1.val, int_type(op0.bit));
+    call('count_mask');
+    alloc_var('rol_val', concat(op0.bit, ignore(' + 1')));
+    rol_val = bit_cast(op0.val, int_type(concat(op0.bit, ignore(' + 1'))));
+    rol_val |= (bit_cast(cf.id, int_type(concat(op0.bit, ignore(' + 1')))) << int(concat(op0.bit, ignore(' + 1')), op0.bit));
+    rol_val = rol(rol_val, bit_cast(count, int_type(concat(op0.bit, ignore(' + 1')))));
+    res = bit_cast(rol_val, int_type(op0.bit));
+    if __expr and count != int(op0.bit, 0):
+      cf.id = bit_cast(rol_val >> int(concat(op0.bit, ignore(' + 1')), op0.bit), int_type1);
+    if __expr and count == int(op0.bit, 1):
+      of.id = bit_cast(cf.id ^ bit_cast(res >> (int(op0.bit, op0.bit) - int(op0.bit, 1)), int_type1), int_type1);
+    op0.val = res;
+    free_var('rol_val');
+    free_var('count');
+    free_var('res');
+
+  rcr: &rcr |
+    alloc_var('res', op0.bit);
+    alloc_var('count', op0.bit);
+    count = bit_cast(op1.val, int(op0.bit, op0.bit));
+    call('count_mask');
+    alloc_var('ror_val', concat(op0.bit, ignore(' + 1')));
+    ror_val = bit_cast(op0.val, int_type(concat(op0.bit, ignore(' + 1'))));
+    ror_val |= (bit_cast(cf.id, int_type(concat(op0.bit, ignore(' + 1')))) << int(concat(op0.bit, ignore(' + 1')), op0.bit));
+    ror_val = ror(ror_val, bit_cast(count, int_type(concat(op0.bit, ignore(' + 1')))));
+    res = bit_cast(ror_val, int_type(op0.bit));
+    if __expr and count != int(op0.bit, 0):
+      cf.id = bit_cast(ror_val >> int(concat(op0.bit, ignore(' + 1')), op0.bit), int_type1);
+    if __expr and count == int(op0.bit, 1):
+      of.id = bit_cast((res >> (int(op0.bit, op0.bit) - int(op0.bit, 1))) ^ (res >> (int(op0.bit, op0.bit) - int(op0.bit, 2))), int_type1);
+    op0.val = res;
+    free_var('ror_val');
+    free_var('count');
+    free_var('res');
+
+  xadd: &xadd |
+    alloc_var('res', op0.bit);
+    alloc_var('tmp_val', op0.bit);
+    tmp_val = op0.val;
+    op0.val = op1.val;
+    op1.val = tmp_val;
+    res = op1.val + op0.val;
+    call('overflow_flag_add');
+    call('carry_flag_add');
+    call('sign_flag');
+    call('zero_flag');
+    call('parity_flag');
+    call('adjust_flag');
+    op0.val = res;
+    free_var('res');
+    free_var('tmp_val');
+
+  cdqe: &cdqe |
+    rax.id = sign_extend(eax.id, int(rax.bit, rax.bit));
+
+  cwde: &cwde |
+    eax.id = sign_extend(ax.id, int(eax.bit, eax.bit));
+
+  cbw: &cbw |
+    ax.id = sign_extend(al.id, int(ax.bit, ax.bit));
 
 ## Data transfer
 
-  mov: &mov
-    [ op0.val = op1.val ]
+  mov: &mov |
+    op0.val = op1.val;
 
-  movzx: &movzx
-    [ 'op0.val = zero_extend(op1.val, int(32, op0.bit))' ]
+  movzx: &movzx |
+    op0.val = zero_extend(op1.val, int(op0.bit, op0.bit));
 
-  movsx: &movsx
-    [ 'op0.val = sign_extend(op1.val, int(32, op0.bit))' ]
+  movsx: &movsx |
+    op0.val = sign_extend(op1.val, int(op0.bit, op0.bit));
+
+  movsd: &movsd |
+    alloc_var('tmp_val', op0.bit);
+    if __code and is_id_and_mem(op0, op1):
+      op0.val = bit_cast(op1.val, int_type128);
+    if __code and is_mem_and_id(op0, op1):
+      op0.val = bit_cast(op1.val, int_type64);
+    if __code and is_id_and_id(op0, op1):
+      tmp_val = op0.val >> int(op0.bit, 64)
+      tmp_val = tmp_val << int(op0.bit, 64)
+      tmp_val += bit_cast(op1.val, int_type64)
+      op0.val = tmp_val;
+    free_var('tmp_val');
+
+  movss: &movss |
+    alloc_var('tmp_val', op0.bit);
+    if __code and is_id_and_mem(op0, op1):
+      op0.val = bit_cast(op1.val, int_type128);
+    if __code and is_mem_and_id(op0, op1):
+      tmp_val = op0.val >> int(op0.bit, 32)
+      tmp_val = tmp_val << int(op0.bit, 32)
+      tmp_val += bit_cast(op1.val, int_type32)
+      op0.val = tmp_val;
+    if __code and is_id_and_id(op0, op1):
+      tmp_val = op0.val >> int(op0.bit, 32)
+      tmp_val = tmp_val << int(op0.bit, 32)
+      tmp_val += bit_cast(op1.val, int_type32)
+      op0.val = tmp_val;
+    free_var('tmp_val');
+
+  movd_sse: &movd_sse |
+    if __code and is_dword_operation:
+      op0.val = bit_cast(op1.val, int_type32);
+    if __code and is_oword_operation:
+      op0.val = bit_cast(op1.val, int_type128);
 
   # TODO: http://www.felixcloutier.com/x86/CMPXCHG8B:CMPXCHG16B.html
   cmpxchg8b: &cmpxchg8b
@@ -177,146 +845,219 @@ semantic:
 
 ## Stack operations
 
-  push: &push
-    [ stack.id -= stack.size, stack.mem = op0.val ]
+  push: &push |
+    alloc_var('pushed_value', stack.bit);
+    pushed_value = sign_extend(op0.val, int(stack.bit, stack.bit));
+    stack.id -= stack.size;
+    stack.mem = pushed_value;
+    free_var('pushed_value');
 
   # http://en.wikipedia.org/wiki/FLAGS_register
   # TODO(KS): interrupt flag
-  pushf: &pushf
-    [
-      'stack.id -= stack.size',
-      'stack.mem = (cf.id | (int1(1) << int(stack.bit, 1)) | (pf.id << int(stack.bit, 2)) | (af.id << int(stack.bit, 4)) | (zf.id << int(stack.bit, 6)) | (sf.id << int(stack.bit, 7)) | (tf.id << int(stack.bit, 8)) | (int1(1) << int(stack.bit, 9)) | (df.id << int(stack.bit, 10)) | (of.id << int(stack.bit, 11)))'
-    ]
+  pushf: &pushf |
+      stack.id -= stack.size;
+      stack.mem =\
+        (  bit_cast(cf.id, int(stack.bit, stack.bit))
+        | (int64(1)                                   << int(stack.bit, 1))
+        | (bit_cast(pf.id, int(stack.bit, stack.bit)) << int(stack.bit, 2))
+        | (bit_cast(af.id, int(stack.bit, stack.bit)) << int(stack.bit, 4))
+        | (bit_cast(zf.id, int(stack.bit, stack.bit)) << int(stack.bit, 6))
+        | (bit_cast(sf.id, int(stack.bit, stack.bit)) << int(stack.bit, 7))
+        | (bit_cast(tf.id, int(stack.bit, stack.bit)) << int(stack.bit, 8))
+        | (int64(1)                                   << int(stack.bit, 9))
+        | (bit_cast(df.id, int(stack.bit, stack.bit)) << int(stack.bit, 10))
+        | (bit_cast(of.id, int(stack.bit, stack.bit)) << int(stack.bit, 11)));
 
-  pusha: &pusha
-    [
-      'stack.id -= int(16, 2)', 'stack.mem = ax.id',
-      'stack.id -= int(16, 2)', 'stack.mem = cx.id',
-      'stack.id -= int(16, 2)', 'stack.mem = dx.id',
-      'stack.id -= int(16, 2)', 'stack.mem = bx.id',
-      'stack.id -= int(16, 2)', 'stack.mem = sp.id + int(16, 8)',
-      'stack.id -= int(16, 2)', 'stack.mem = bp.id',
-      'stack.id -= int(16, 2)', 'stack.mem = si.id',
-      'stack.id -= int(16, 2)', 'stack.mem = di.id',
-    ]
+  pusha: &pusha |
+    stack.id -= int16(2);stack.mem = ax.id;
+    stack.id -= int16(2);stack.mem = cx.id;
+    stack.id -= int16(2);stack.mem = dx.id;
+    stack.id -= int16(2);stack.mem = bx.id;
+    stack.id -= int16(2);stack.mem = sp.id + int16(8);
+    stack.id -= int16(2);stack.mem = bp.id;
+    stack.id -= int16(2);stack.mem = si.id;
+    stack.id -= int16(2);stack.mem = di.id;
 
-  pushad: &pushad
-    [
-      'stack.id -= int(32, 4)', 'stack.mem = eax.id',
-      'stack.id -= int(32, 4)', 'stack.mem = ecx.id',
-      'stack.id -= int(32, 4)', 'stack.mem = edx.id',
-      'stack.id -= int(32, 4)', 'stack.mem = ebx.id',
-      'stack.id -= int(32, 4)', 'stack.mem = esp.id + int(32, 16)',
-      'stack.id -= int(32, 4)', 'stack.mem = ebp.id',
-      'stack.id -= int(32, 4)', 'stack.mem = esi.id',
-      'stack.id -= int(32, 4)', 'stack.mem = edi.id',
-    ]
+  pushad: &pushad |
+    stack.id -= int32(4);stack.mem = eax.id;
+    stack.id -= int32(4);stack.mem = ecx.id;
+    stack.id -= int32(4);stack.mem = edx.id;
+    stack.id -= int32(4);stack.mem = ebx.id;
+    stack.id -= int32(4);stack.mem = esp.id + int32(16);
+    stack.id -= int32(4);stack.mem = ebp.id;
+    stack.id -= int32(4);stack.mem = esi.id;
+    stack.id -= int32(4);stack.mem = edi.id;
 
-
-  pop: &pop
-    [ op0.val = stack.mem, stack.id += stack.size ]
+  pop: &pop |
+    alloc_var('popped_value', stack.bit);
+    popped_value = stack.mem;
+    stack.id += stack.size;
+    op0.val = popped_value;
+    free_var('popped_value');
 
   # TODO(KS): see pushf
-  popf: &popf
-    [
-      stack.id += stack.size,
-      res = stack.mem,
-      'cf.id = res & int1(1)',
-      'pf.id = (res >> int(stack.bit, 2)) & int1(1)',
-    ]
+  popf: &popf |
+    alloc_var('flags', stack.bit);
+    flags = stack.mem;
+    stack.id += stack.size;
+    cf.id = bit_cast(flags, int1(1));
+    pf.id = bit_cast((flags >> int(stack.bit,  2)), int1(1));
+    af.id = bit_cast((flags >> int(stack.bit,  4)), int1(1));
+    zf.id = bit_cast((flags >> int(stack.bit,  6)), int1(1));
+    sf.id = bit_cast((flags >> int(stack.bit,  7)), int1(1));
+    tf.id = bit_cast((flags >> int(stack.bit,  8)), int1(1));
+    df.id = bit_cast((flags >> int(stack.bit, 10)), int1(1));
+    of.id = bit_cast((flags >> int(stack.bit, 11)), int1(1));
+    free_var('flags');
 
-  popa: &popa
-    [
-      'di.id = stack.mem', 'stack.id += int(16, 2)',
-      'si.id = stack.mem', 'stack.id += int(16, 2)',
-      'bp.id = stack.mem', 'stack.id += int(16, 2)',
-      'sp.id = stack.mem', 'stack.id += int(16, 2)',
-      'bx.id = stack.mem', 'stack.id += int(16, 2)',
-      'dx.id = stack.mem', 'stack.id += int(16, 2)',
-      'cx.id = stack.mem', 'stack.id += int(16, 2)',
-      'ax.id = stack.mem', 'stack.id += int(16, 2)',
-    ]
+  popa: &popa |
+    di.id = stack.mem;stack.id += int16(2);
+    si.id = stack.mem;stack.id += int16(2);
+    bp.id = stack.mem;stack.id += int16(2);
+    sp.id = stack.mem;stack.id += int16(2);
+    bx.id = stack.mem;stack.id += int16(2);
+    dx.id = stack.mem;stack.id += int16(2);
+    cx.id = stack.mem;stack.id += int16(2);
+    ax.id = stack.mem;stack.id += int16(2);
 
-  popad: &popad
-    [
-      'edi.id = stack.mem', 'stack.id += int(32, 4)',
-      'esi.id = stack.mem', 'stack.id += int(32, 4)',
-      'ebp.id = stack.mem', 'stack.id += int(32, 4)',
-      'esp.id = stack.mem', 'stack.id += int(32, 4)',
-      'ebx.id = stack.mem', 'stack.id += int(32, 4)',
-      'edx.id = stack.mem', 'stack.id += int(32, 4)',
-      'ecx.id = stack.mem', 'stack.id += int(32, 4)',
-      'eax.id = stack.mem', 'stack.id += int(32, 4)',
-    ]
+  popad: &popad |
+    edi.id = stack.mem;stack.id += int32(4);
+    esi.id = stack.mem;stack.id += int32(4);
+    ebp.id = stack.mem;stack.id += int32(4);
+    esp.id = stack.mem;stack.id += int32(4);
+    ebx.id = stack.mem;stack.id += int32(4);
+    edx.id = stack.mem;stack.id += int32(4);
+    ecx.id = stack.mem;stack.id += int32(4);
+    eax.id = stack.mem;stack.id += int32(4);
 
 ## Control flow operations
 
-  jmp: &jmp
-    [ program.id = op0.val ]
+  jmp: &jmp |
+    program.id = op0.val;
 
-  call: &call
-    [ stack.id -= stack.size, stack.mem = program.id, program.id = op0.val ]
+  call: &call |
+    stack.id -= stack.size;
+    stack.mem = program.id;
+    program.id = op0.val;
 
-  ret: &ret
-    [ program.id = stack.mem, stack.id += stack.size ]
+  ret: &ret |
+    program.id = stack.mem;
+    stack.id += stack.size;
 
-  # NOTE: we must save op1 in a temporary space, it could be used while computing op0
+  retn: &retn |
+    program.id = stack.mem;
+    stack.id += stack.size;
+    stack.id += bit_cast(op0.val, int(stack.bit, stack.bit));
 
-  nop: &nop
-    [ program.id = program.id ]
+  nop: &nop |
+    program.id = program.id;
 
-  xchg: &xchg
-    [ 'exchange(op0.val, op1.val)' ]
+  xchg: &xchg |
+    alloc_var('tmp_val', op0.bit);
+    tmp_val = op0.val;
+    op0.val = op1.val;
+    op1.val = tmp_val;
+    free_var('tmp_val');
 
   # FIXME: not done http://faydoc.tripod.com/cpu/cmpxchg.htm
-  cmpxchg: &cmpxchg
-    [
-      "if op0.val == acc.id: zf.id = int1(1)\nelse: zf.id = int1(0)",
-      'if zf.id == int1(1): op0.val = op1.val'
-    ]
+  cmpxchg: &cmpxchg |
+    if __expr and op0.val == acc.id:
+      zf.id = int1(1)
+    else:
+      zf.id = int1(0);
 
-  loop: &loop
-    [ 'cnt.id -= int(cnt.bit, 1)', 'if cnt.id != int(cnt.bit, 0): program.id = op0.val' ]
+    if __expr and zf.id == int1(1):
+      op0.val = op1.val;
 
-  loopz: &loopz
-    [ 'cnt.id -= int(cnt.bit, 1)', 'if (cnt.id | zf.id) != int(cnt.bit, 0): program.id = op0.val' ]
+  loop: &loop |
+    cnt.id -= int(cnt.bit, 1);
+    if __expr and cnt.id != int(cnt.bit, 0):
+      program.id = op0.val;
 
-  loopnz: &loopnz
-    [ 'cnt.id -= int(cnt.bit, 1)', 'if (zf.id ^ int(cnt.bit, 1) & cnt.id) != int(cnt.bit, 0): program.id = op0.val' ]
+  loopz: &loopz |
+    cnt.id -= int(cnt.bit, 1);
+    if __expr and (cnt.id | zf.id) != int(cnt.bit, 0):
+      program.id = op0.val;
 
-  jcntz: &jcntz
-    [ 'if cnt.id == int(cnt.bit, 0): program.id = op0.val' ]
+  loopnz: &loopnz |
+    cnt.id -= int(cnt.bit, 1);
+    if __expr and (zf.id ^ int(cnt.bit, 1) & cnt.id) != int(cnt.bit, 0):
+      program.id = op0.val;
+
+  jcntz: &jcntz |
+    if __expr and cnt.id == int(cnt.bit, 0):
+      program.id = op0.val;
 
 ## String operations
 
-  scas: &scas
-    [
-      "if op0.val == op1.val: zf.id = int1(1)\nelse: zf.id = int1(0)",
-      "if df.id == int1(1): op0.addr -= op0.size\nelse: op0.addr += op0.size"
-    ]
+  scas: &scas |
+    alloc_var('loop', 1);
+    loop = int1(1);
+    if __code and instruction_has_prefix(repz):
+      if __expr and cnt.id == int(cnt.bit, 0): loop = int1(0)
+      while loop == int1(1):
+        call('scan_string')
+        cnt.id -= int(cnt.bit, 1)
+        if __expr and cnt.id == int(cnt.bit, 0): loop = int1(0)
+        if __expr and zf.id == int1(0): loop = int1(0);
+    if __code and instruction_has_prefix(repnz):
+      if __expr and cnt.id == int(cnt.bit, 0): loop = int1(0)
+      while loop == int1(1):
+        call('scan_string')
+        cnt.id -= int(cnt.bit, 1)
+        if __expr and cnt.id == int(cnt.bit, 0): loop = int1(0)
+        if __expr and zf.id == int1(1): loop = int1(0);
+    if __code and instruction_has_no_prefix(repz, repnz):
+      call('scan_string');
+    free_var('loop');
 
-  stos: &stos
-    [
-      'op0.val = op1.val',
-      "if df.id == int1(1): op0.addr -= op0.size\nelse:op0.addr += op0.size"
-    ]
+  cmps: &cmps |
+    alloc_var('loop', 1);
+    loop = int1(1);
+    if __code and instruction_has_prefix(repz):
+      if __expr and cnt.id == int(cnt.bit, 0): loop = int1(0)
+      while loop == int1(1):
+        call('compare_string')
+        cnt.id -= int(cnt.bit, 1)
+        if __expr and cnt.id == int(cnt.bit, 0): loop = int1(0)
+        if __expr and zf.id == int1(0): loop = int1(0);
+    if __code and instruction_has_prefix(repnz):
+      if __expr and cnt.id == int(cnt.bit, 0): loop = int1(0)
+      while loop == int1(1):
+        call('compare_string')
+        cnt.id -= int(cnt.bit, 1)
+        if __expr and cnt.id == int(cnt.bit, 0): loop = int1(0)
+        if __expr and zf.id == int1(1): loop = int1(0);
+    if __code and instruction_has_no_prefix(repz, repnz):
+      call('compare_string');
+    free_var('loop');
 
-  movs: &movs
-    [ ]
+  stos: &stos |
+    if __code and instruction_has_prefix(rep):
+      while cnt.id != int(cnt.bit, 0):
+        call('store_string')
+        cnt.id -= int(cnt.bit, 1);
+    if __code and instruction_has_no_prefix(rep):
+      call('store_string');
 
-  cmps: &cmps
-    [ ]
+  movs: &movs |
+    if __code and instruction_has_prefix(rep):
+      while cnt.id != int(cnt.bit, 0):
+        call('move_string')
+        cnt.id -= int(cnt.bit, 1);
+    if __code and instruction_has_no_prefix(rep):
+      call('move_string');
 
 ## Flags manipulation
 
-  clc: &clc
-    [ cf.id = int1(0) ]
+  clc: &clc |
+    cf.id = int1(0);
 
-  stc: &stc
-    [ cf.id = int1(1) ]
+  stc: &stc |
+    cf.id = int1(1);
 
-  cmc: &cmc
-    [ cf.id = cf.id ^ int1(1) ]
+  cmc: &cmc |
+    cf.id = cf.id ^ int1(1);
 
   cli: &cli
     [ ]
@@ -324,46 +1065,86 @@ semantic:
   sti: &sti
     [ ]
 
-  cld: &cld
-    [ df.id = int1(0) ]
+  cld: &cld |
+    df.id = int1(0);
 
-  std: &std
-    [ df.id = int1(1) ]
+  std: &std |
+    df.id = int1(1);
 
-  cmp: &cmp
-    [ expr('begin_update_flags'), res = op0.val - op1.val, expr('end_update_flags') ]
+  cmp: &cmp |
+    alloc_var('res', op0.bit);
+    res = op0.val - op1.val;
+    call('overflow_flag_sub');
+    call('carry_flag_sub');
+    call('sign_flag');
+    call('zero_flag');
+    call('parity_flag');
+    call('adjust_flag');
+    free_var('res');
 
-  test: &test
-    [ expr('begin_update_flags'), res = op0.val & op1.val, expr('end_update_flags') ]
+  test: &test |
+    alloc_var('res', op0.bit);
+    res = op0.val & op1.val;
+    of.id = int1(0)
+    cf.id = int1(0)
+    call('sign_flag')
+    call('zero_flag')
+    call('parity_flag')
+    free_var('res');
+
+  lahf: &lahf |
+    ah.id =\
+        (  bit_cast(cf.id, int8(ah.bit))
+        | (int64(1)                      << int(ah.bit, 1))
+        | (bit_cast(pf.id, int8(ah.bit)) << int(ah.bit, 2))
+        | (int64(0)                      << int(ah.bit, 3))
+        | (bit_cast(af.id, int8(ah.bit)) << int(ah.bit, 4))
+        | (int64(0)                      << int(ah.bit, 5))
+        | (bit_cast(zf.id, int8(ah.bit)) << int(ah.bit, 6))
+        | (bit_cast(sf.id, int8(ah.bit)) << int(ah.bit, 7)));
 
 ## Bit manipulation
 
-  bt: &bt
-    [ cf.id = ((op0.val >> op1.val) & int1(1)) ]
+  bt: &bt |
+    cf.id = bit_cast((op0.val >> (bit_cast(op1.val, int_type(op0.bit)) & (int(op0.bit, op0.bit) - int(op0.bit, 1)))), int_type1);
 
-  btc: &btc
-    [
-      cf.id = ((op0.val >> op1.val) & int1(1)),
-      'op0.val = (op0.val ^ ((int(op0.bit, 1) << op1.val)))'
-    ]
+  btc: &btc |
+    alloc_var('bit_set', 16);
+    bit_set = bit_cast(bit_cast(op1.val, int_type(op0.bit)) & (int(op0.bit, op0.bit) - int(op0.bit, 1)), int_type16);
+    cf.id = bit_cast((op0.val >> bit_set), int_type1);
+    op0.val = (op0.val ^ ((int(op0.bit, 1) << bit_cast(bit_set, int_type(op0.bit)))));
+    free_var('bit_set');
 
-  bts: &bts
-    [
-      cf.id = ((op0.val >> op1.val) & int1(1)),
-      'op0.val = (op0.val | ((int(op0.bit, 1) << op1.val)))'
-    ]
+  bts: &bts |
+    alloc_var('res', op0.bit);
+    alloc_var('bit_set', 16);
+    bit_set = bit_cast(bit_cast(op1.val, int_type(op0.bit)) & (int(op0.bit, op0.bit) - int(op0.bit, 1)), int_type16);
+    cf.id = bit_cast((op0.val >> bit_set), int_type1);
+    res = (op0.val | ((int(op0.bit, 1) << bit_cast(bit_set, int_type(op0.bit)))));
+    op0.val = res
+    free_var('bit_set');
+    free_var('res');
 
-  btr: &btr
-    [
-      cf.id = ((op0.val >> op1.val) & int1(1)),
-      'op0.val = (op0.val & ((int(op0.bit, 1) << op1.val) ^ int(op0.bit, -1)))'
-    ]
+  btr: &btr |
+    alloc_var('bit_set', 16);
+    bit_set = bit_cast(bit_cast(op1.val, int_type(op0.bit)) & (int(op0.bit, op0.bit) - int(op0.bit, 1)), int_type16);
+    cf.id = bit_cast((op0.val >> bit_set), int_type1);
+    op0.val = (op0.val & (~(int(op0.bit, 1) << bit_cast(bit_set, int_type(op0.bit)))));
+    free_var('bit_set');
 
-  bsf: &bsf
-    [ 'op0 = bsf(op1)' ]
+  bsf: &bsf |
+    if __expr and op1.val == int(op1.bit, 0):
+      zf.id = int1(1)
+    else:
+      zf.id = int1(0)
+      op0.val = bsf(op1.val);
 
-  bsr: &bsr
-    [ 'op0 = bsr(op1)' ]
+  bsr: &bsr |
+    if __expr and op1.val == int(op1.bit, 0):
+      zf.id = int1(1)
+    else:
+      zf.id = int1(0)
+      op0.val = bsr(op1);
 
 ## Condition
 # o           → of = 1
@@ -383,104 +1164,142 @@ semantic:
 # le / ng     → ((sf xor of) or zf) = 1
 # nle / g     → ((sf xor of) or zf) = 0
 
-  jmpo: &jmpo
-    [ 'if of.id == int1(1): program.id = op0.val' ]
-  jmpno: &jmpno
-    [ 'if of.id == int1(0): program.id = op0.val' ]
-  jmpc: &jmpc
-    [ 'if cf.id == int1(1): program.id = op0.val' ]
-  jmpnc: &jmpnc
-    [ 'if cf.id == int1(0): program.id = op0.val' ]
-  jmpz: &jmpz
-    [ 'if zf.id == int1(1): program.id = op0.val' ]
-  jmpnz: &jmpnz
-    [ 'if zf.id == int1(0): program.id = op0.val' ]
-  jmps: &jmps
-    [ 'if sf.id == int1(1): program.id = op0.val' ]
-  jmpns: &jmpns
-    [ 'if sf.id == int1(0): program.id = op0.val' ]
-  jmpp: &jmpp
-    [ 'if pf.id == int1(1): program.id = op0.val' ]
-  jmpnp: &jmpnp
-    [ 'if pf.id == int1(0): program.id = op0.val' ]
-  jmpbe: &jmpbe
-    [ 'if (cf.id | zf.id) != int1(0): program.id = op0.val' ]
-  jmpa: &jmpa
-    [ 'if (cf.id | zf.id) == int1(0): program.id = op0.val' ]
-  jmpl: &jmpl
-    [ 'if (sf.id ^ of.id) != int1(0): program.id = op0.val' ]
-  jmpge: &jmpge
-    [ 'if (sf.id ^ of.id) == int1(0): program.id = op0.val' ]
-  jmple: &jmple
-    [ 'if ((sf.id ^ of.id) | zf.id) != int1(0): program.id = op0.val' ]
-  jmpg: &jmpg
-    [ 'if ((sf.id ^ of.id) | zf.id) == int1(0): program.id = op0.val' ]
+  jmpo: &jmpo |
+    if __expr and of.id == int1(1): program.id = op0.val;
+  jmpno: &jmpno |
+    if __expr and of.id == int1(0): program.id = op0.val;
+  jmpc: &jmpc |
+    if __expr and cf.id == int1(1): program.id = op0.val;
+  jmpnc: &jmpnc |
+    if __expr and cf.id == int1(0): program.id = op0.val;
+  jmpz: &jmpz |
+    if __expr and zf.id == int1(1): program.id = op0.val;
+  jmpnz: &jmpnz |
+    if __expr and zf.id == int1(0): program.id = op0.val;
+  jmps: &jmps |
+    if __expr and sf.id == int1(1): program.id = op0.val;
+  jmpns: &jmpns |
+    if __expr and sf.id == int1(0): program.id = op0.val;
+  jmpp: &jmpp |
+    if __expr and pf.id == int1(1): program.id = op0.val;
+  jmpnp: &jmpnp |
+    if __expr and pf.id == int1(0): program.id = op0.val;
+  jmpbe: &jmpbe |
+    if __expr and (cf.id | zf.id) != int1(0): program.id = op0.val;
+  jmpa: &jmpa |
+    if __expr and (cf.id | zf.id) == int1(0): program.id = op0.val;
+  jmpl: &jmpl |
+    if __expr and (sf.id ^ of.id) != int1(0): program.id = op0.val;
+  jmpge: &jmpge |
+    if __expr and (sf.id ^ of.id) == int1(0): program.id = op0.val;
+  jmple: &jmple |
+    if __expr and ((sf.id ^ of.id) | zf.id) != int1(0): program.id = op0.val;
+  jmpg: &jmpg |
+    if __expr and ((sf.id ^ of.id) | zf.id) == int1(0): program.id = op0.val;
 
-  seto: &seto
-    [ "if of.id == int1(1): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
-  setno: &setno
-    [ "if of.id == int1(0): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
-  setc: &setc
-    [ "if cf.id == int1(1): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
-  setnc: &setnc
-    [ "if cf.id == int1(0): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
-  setz: &setz
-    [ "if zf.id == int1(1): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
-  setnz: &setnz
-    [ "if zf.id == int1(0): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
-  sets: &sets
-    [ "if sf.id == int1(1): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
-  setns: &setns
-    [ "if sf.id == int1(0): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
-  setp: &setp
-    [ "if pf.id == int1(1): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
-  setnp: &setnp
-    [ "if pf.id == int1(0): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
-  setbe: &setbe
-    [ "if (cf.id | zf.id) != int1(0): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
-  seta: &seta
-    [ "if (cf.id | zf.id) == int1(0): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
-  setl: &setl
-    [ "if (sf.id ^ of.id) != int1(0): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
-  setge: &setge
-    [ "if (sf.id ^ of.id) == int1(0): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
-  setle: &setle
-    [ "if ((sf.id ^ of.id) | zf.id) != int1(0): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
-  setg: &setg
-    [ "if ((sf.id ^ of.id) | zf.id) == int1(0): op0.val = int8(1)\nelse: op0.val = int8(0)" ]
+  seto: &seto |
+    if __expr and of.id == int1(1): op0.val = int8(1)
+    else: op0.val = int8(0);
+  setno: &setno |
+    if __expr and of.id == int1(0): op0.val = int8(1)
+    else: op0.val = int8(0);
+  setc: &setc |
+    if __expr and cf.id == int1(1): op0.val = int8(1)
+    else: op0.val = int8(0);
+  setnc: &setnc |
+    if __expr and cf.id == int1(0): op0.val = int8(1)
+    else: op0.val = int8(0);
+  setz: &setz |
+    if __expr and zf.id == int1(1): op0.val = int8(1)
+    else: op0.val = int8(0);
+  setnz: &setnz |
+    if __expr and zf.id == int1(0): op0.val = int8(1)
+    else: op0.val = int8(0);
+  sets: &sets |
+    if __expr and sf.id == int1(1): op0.val = int8(1)
+    else: op0.val = int8(0);
+  setns: &setns |
+    if __expr and sf.id == int1(0): op0.val = int8(1)
+    else: op0.val = int8(0);
+  setp: &setp |
+    if __expr and pf.id == int1(1): op0.val = int8(1)
+    else: op0.val = int8(0);
+  setnp: &setnp |
+    if __expr and pf.id == int1(0): op0.val = int8(1)
+    else: op0.val = int8(0);
+  setbe: &setbe |
+    if __expr and (cf.id | zf.id) != int1(0): op0.val = int8(1)
+    else: op0.val = int8(0);
+  seta: &seta |
+    if __expr and (cf.id | zf.id) == int1(0): op0.val = int8(1)
+    else: op0.val = int8(0);
+  setl: &setl |
+    if __expr and (sf.id ^ of.id) != int1(0): op0.val = int8(1)
+    else: op0.val = int8(0);
+  setge: &setge |
+    if __expr and (sf.id ^ of.id) == int1(0): op0.val = int8(1)
+    else: op0.val = int8(0);
+  setle: &setle |
+    if __expr and ((sf.id ^ of.id) | zf.id) != int1(0): op0.val = int8(1)
+    else: op0.val = int8(0);
+  setg: &setg |
+    if __expr and ((sf.id ^ of.id) | zf.id) == int1(0): op0.val = int8(1)
+    else: op0.val = int8(0);
 
-  cmovo: &cmovo
-    [ 'if of.id == int1(1): op0.val = op1.val' ]
-  cmovno: &cmovno
-    [ 'if of.id == int1(0): op0.val = op1.val' ]
-  cmovc: &cmovc
-    [ 'if cf.id == int1(1): op0.val = op1.val' ]
-  cmovnc: &cmovnc
-    [ 'if cf.id == int1(0): op0.val = op1.val' ]
-  cmovz: &cmovz
-    [ 'if zf.id == int1(1): op0.val = op1.val' ]
-  cmovnz: &cmovnz
-    [ 'if zf.id == int1(0): op0.val = op1.val' ]
-  cmovs: &cmovs
-    [ 'if sf.id == int1(1): op0.val = op1.val' ]
-  cmovns: &cmovns
-    [ 'if sf.id == int1(0): op0.val = op1.val' ]
-  cmovp: &cmovp
-    [ 'if pf.id == int1(1): op0.val = op1.val' ]
-  cmovnp: &cmovnp
-    [ 'if pf.id == int1(0): op0.val = op1.val' ]
-  cmovbe: &cmovbe
-    [ 'if (cf.id | zf.id) != int1(0): op0.val = op1.val' ]
-  cmova: &cmova
-    [ 'if (cf.id | zf.id) == int1(0): op0.val = op1.val' ]
-  cmovl: &cmovl
-    [ 'if (sf.id ^ of.id) != int1(0): op0.val = op1.val' ]
-  cmovge: &cmovge
-    [ 'if (sf.id ^ of.id) == int1(0): op0.val = op1.val' ]
-  cmovle: &cmovle
-    [ 'if ((sf.id ^ of.id) | zf.id) != int1(0): op0.val = op1.val' ]
-  cmovg: &cmovg
-    [ 'if ((sf.id ^ of.id) | zf.id) == int1(0): op0.val = op1.val' ]
+  cmovo: &cmovo |
+    if __expr and of.id == int1(1): op0.val = op1.val;
+  cmovno: &cmovno |
+    if __expr and of.id == int1(0): op0.val = op1.val;
+  cmovc: &cmovc |
+    if __expr and cf.id == int1(1): op0.val = op1.val;
+  cmovnc: &cmovnc |
+    if __expr and cf.id == int1(0): op0.val = op1.val;
+  cmovz: &cmovz |
+    if __expr and zf.id == int1(1): op0.val = op1.val;
+  cmovnz: &cmovnz |
+    if __expr and zf.id == int1(0): op0.val = op1.val;
+  cmovs: &cmovs |
+    if __expr and sf.id == int1(1): op0.val = op1.val;
+  cmovns: &cmovns |
+    if __expr and sf.id == int1(0): op0.val = op1.val;
+  cmovp: &cmovp |
+    if __expr and pf.id == int1(1): op0.val = op1.val;
+  cmovnp: &cmovnp |
+    if __expr and pf.id == int1(0): op0.val = op1.val;
+  cmovbe: &cmovbe |
+    if __expr and (cf.id | zf.id) != int1(0): op0.val = op1.val;
+  cmova: &cmova |
+    if __expr and (cf.id | zf.id) == int1(0): op0.val = op1.val;
+  cmovl: &cmovl |
+    if __expr and (sf.id ^ of.id) != int1(0): op0.val = op1.val;
+  cmovge: &cmovge |
+    if __expr and (sf.id ^ of.id) == int1(0): op0.val = op1.val;
+  cmovle: &cmovle |
+    if __expr and ((sf.id ^ of.id) | zf.id) != int1(0): op0.val = op1.val;
+  cmovg: &cmovg |
+    if __expr and ((sf.id ^ of.id) | zf.id) == int1(0): op0.val = op1.val;
+
+## System
+
+  sysenter: &sysenter |
+
+  sysexit: &sysexit |
+
+  syscall: &syscall |
+
+  sysret: &sysret |
+
+  # TODO(gg): support 64-bit and support global incremented variable for counter
+  rdtsc: &rdtsc |
+    eax.id = int32(0);
+    edx.id = int32(0);
+
+  # TODO:(gg): support EAX input value to return more "real" information
+  cpuid: &cpuid |
+    eax.id = int32(0x11111111);
+    ecx.id = int32(0x22222222);
+    edx.id = int32(0x33333333);
+    ebx.id = int32(0x44444444);
 
 ## Instruction definition #####################################################
 
@@ -749,6 +1568,7 @@ instruction:
         update_flags: [ cf, pf, af, zf, sf, of ]
         clear_flags: [ of ]
         attr: [ nm64 ]
+        semantic: *daa
 
       - opcode: 0x28
         mnemonic: sub
@@ -804,6 +1624,7 @@ instruction:
         update_flags: [ cf, pf, af, zf, sf, of ]
         clear_flags: [ of ]
         attr: [ nm64 ]
+        semantic: *das
 
       - opcode: 0x30
         mnemonic: xor
@@ -856,6 +1677,7 @@ instruction:
         test_flags: [ af, cf ]
         update_flags: [ cf, pf, af, zf, sf, of ]
         clear_flags: [ of ]
+        semantic: *aaa
 
       - opcode: 0x38
         mnemonic: cmp
@@ -911,6 +1733,7 @@ instruction:
         update_flags: [ cf, pf, af, zf, sf, of ]
         clear_flags: [ of, sf, zf, pf ]
         attr: [ nm64 ]
+        semantic: *aas
 
       - opcode: 0x40
         sub_opcodes:
@@ -1091,72 +1914,72 @@ instruction:
       - opcode: 0x50
         sub_opcodes:
           - mnemonic: push
-            operand: [ wqAX ]
+            operand: [ d64_rAX ]
             constraint: d64
             semantic: *push
 
           - mnemonic: push
-            operand: [ wq8 ]
+            operand: [ d64_r8 ]
             attr: [ rexb, m64 ]
             semantic: *push
 
       - opcode: 0x51
         sub_opcodes:
           - mnemonic: push
-            operand: [ wqCX ]
+            operand: [ d64_rCX ]
             constraint: d64
             semantic: *push
 
           - mnemonic: push
-            operand: [ wq9 ]
+            operand: [ d64_r9 ]
             attr: [ rexb, m64 ]
             semantic: *push
 
       - opcode: 0x52
         sub_opcodes:
           - mnemonic: push
-            operand: [ wqDX ]
+            operand: [ d64_rDX ]
             constraint: d64
             semantic: *push
 
           - mnemonic: push
-            operand: [ wq10 ]
+            operand: [ d64_r10 ]
             attr: [ rexb, m64 ]
             semantic: *push
 
       - opcode: 0x53
         sub_opcodes:
           - mnemonic: push
-            operand: [ wqBX ]
+            operand: [ d64_rBX ]
             constraint: d64
             semantic: *push
 
           - mnemonic: push
-            operand: [ wq11 ]
+            operand: [ d64_r11 ]
             attr: [ rexb, m64 ]
             semantic: *push
 
       - opcode: 0x54
         sub_opcodes:
           - mnemonic: push
-            operand: [ wqSP ]
+            operand: [ d64_rSP ]
             constraint: d64
             semantic: *push
 
           - mnemonic: push
-            operand: [ wq12 ]
+            operand: [ d64_r12 ]
             attr: [ rexb, m64 ]
             semantic: *push
 
       - opcode: 0x55
         sub_opcodes:
           - mnemonic: push
-            operand: [ wqBP ]
+            operand: [ d64_rBP ]
             constraint: d64
             semantic: *push
 
           - mnemonic: push
-            operand: [ wq13 ]
+            operand: [ d64_r13 ]
             attr: [ rexb, m64 ]
             constraint: d64
             semantic: *push
@@ -1164,12 +1987,12 @@ instruction:
       - opcode: 0x56
         sub_opcodes:
           - mnemonic: push
-            operand: [ wqSI ]
+            operand: [ d64_rSI ]
             constraint: d64
             semantic: *push
 
           - mnemonic: push
-            operand: [ wq14 ]
+            operand: [ d64_r14 ]
             attr: [ rexb, m64 ]
             constraint: d64
             semantic: *push
@@ -1177,12 +2000,12 @@ instruction:
       - opcode: 0x57
         sub_opcodes:
           - mnemonic: push
-            operand: [ wqDI ]
+            operand: [ d64_rDI ]
             constraint: d64
             semantic: *push
 
           - mnemonic: push
-            operand: [ wq15 ]
+            operand: [ d64_r15 ]
             attr: [ rexb, m64 ]
             constraint: d64
             semantic: *push
@@ -1190,12 +2013,12 @@ instruction:
       - opcode: 0x58
         sub_opcodes:
           - mnemonic: pop
-            operand: [ wqAX ]
+            operand: [ d64_rAX ]
             constraint: d64
             semantic: *pop
 
           - mnemonic: pop
-            operand: [ wq8 ]
+            operand: [ d64_r8 ]
             attr: [ rexb, m64 ]
             constraint: d64
             semantic: *pop
@@ -1203,12 +2026,12 @@ instruction:
       - opcode: 0x59
         sub_opcodes:
           - mnemonic: pop
-            operand: [ wqCX ]
+            operand: [ d64_rCX ]
             constraint: d64
             semantic: *pop
 
           - mnemonic: pop
-            operand: [ wq9 ]
+            operand: [ d64_r9 ]
             attr: [ rexb, m64 ]
             constraint: d64
             semantic: *pop
@@ -1216,12 +2039,12 @@ instruction:
       - opcode: 0x5a
         sub_opcodes:
           - mnemonic: pop
-            operand: [ wqDX ]
+            operand: [ d64_rDX ]
             constraint: d64
             semantic: *pop
 
           - mnemonic: pop
-            operand: [ wq10 ]
+            operand: [ d64_r10 ]
             attr: [ rexb, m64 ]
             constraint: d64
             semantic: *pop
@@ -1229,12 +2052,12 @@ instruction:
       - opcode: 0x5b
         sub_opcodes:
           - mnemonic: pop
-            operand: [ wqBX ]
+            operand: [ d64_rBX ]
             constraint: d64
             semantic: *pop
 
           - mnemonic: pop
-            operand: [ wq11 ]
+            operand: [ d64_r11 ]
             attr: [ rexb, m64 ]
             constraint: d64
             semantic: *pop
@@ -1242,12 +2065,12 @@ instruction:
       - opcode: 0x5c
         sub_opcodes:
           - mnemonic: pop
-            operand: [ wqSP ]
+            operand: [ d64_rSP ]
             constraint: d64
             semantic: *pop
 
           - mnemonic: pop
-            operand: [ wq12 ]
+            operand: [ d64_r12 ]
             attr: [ rexb, m64 ]
             constraint: d64
             semantic: *pop
@@ -1255,12 +2078,12 @@ instruction:
       - opcode: 0x5d
         sub_opcodes:
           - mnemonic: pop
-            operand: [ wqBP ]
+            operand: [ d64_rBP ]
             constraint: d64
             semantic: *pop
 
           - mnemonic: pop
-            operand: [ wq13 ]
+            operand: [ d64_r13 ]
             attr: [ rexb, m64 ]
             constraint: d64
             semantic: *pop
@@ -1268,12 +2091,12 @@ instruction:
       - opcode: 0x5e
         sub_opcodes:
           - mnemonic: pop
-            operand: [ wqSI ]
+            operand: [ d64_rSI ]
             constraint: d64
             semantic: *pop
 
           - mnemonic: pop
-            operand: [ wq14 ]
+            operand: [ d64_r14 ]
             attr: [ rexb, m64 ]
             constraint: d64
             semantic: *pop
@@ -1281,12 +2104,12 @@ instruction:
       - opcode: 0x5f
         sub_opcodes:
           - mnemonic: pop
-            operand: [ wqDI ]
+            operand: [ d64_rDI ]
             constraint: d64
             semantic: *pop
 
           - mnemonic: pop
-            operand: [ wq15 ]
+            operand: [ d64_r15 ]
             attr: [ rexb, m64 ]
             constraint: d64
             semantic: *pop
@@ -1696,35 +2519,36 @@ instruction:
             attr: [ rexb ]
             semantic: *xchg
 
+      # TODO(gg): Recode convert instructions
       - opcode: 0x98
         sub_opcodes:
           - mnemonic: cwde
             cpu_model: ">= X86_Arch_80386"
-            semantic: [ "if (ax.id & int16(0x8000)) == int16(0): eax.id &= int32(0x0000ffff)\nelse: eax.id |= int32(0xffff0000)" ]
+            semantic: *cwde
 
           - mnemonic: cbw
             cpu_model: ">= X86_Arch_8088"
             attr: [ op_size ]
-            semantic: [ "if (al.id & int8(0x80)) == int8(0): ax.id &= int16(0x00ff)\nelse: ax.id |= int16(0xff00)" ]
+            semantic: *cbw
 
           - mnemonic: cdqe
             attr: [ rexw ]
-            semantic: [ "if (eax.id & int32(0x80000000)) == int32(0): rax.id &= int64(0x00000000ffffffff)\nelse: rax.id |= int64(0xffffffff00000000)" ]
+            semantic: *cdqe
 
       - opcode: 0x99
         sub_opcodes:
           - mnemonic: cdq
             cpu_model: ">= X86_Arch_80386"
-            semantic: [ "if (eax.id & int32(0x80000000)) == int32(0): edx.id = int32(0xffffffff)\nelse: edx.id = int32(0)" ]
+            semantic: [ "if __expr and (eax.id & int32(0x80000000)) == int32(0x80000000): edx.id = int32(0xffffffff)\nelse: edx.id = int32(0)" ]
 
           - mnemonic: cwd
             cpu_model: ">= X86_Arch_8088"
             attr: [ op_size ]
-            semantic: [ "if (ax.id & int16(0x8000)) == int16(0): dx.id = int16(0xffff)\nelse: dx.id = int16(0)" ]
+            semantic: [ "if __expr and (ax.id & int16(0x8000)) == int16(0x8000): dx.id = int16(0xffff)\nelse: dx.id = int16(0)" ]
 
           - mnemonic: cqo
             attr: [ rexw ]
-            semantic: [ "if (rax.id & int64(0x8000000000000000)) == int64(0): rdx.id = int64(0xffffffffffffffff)\nelse: rdx.id = int64(0)" ]
+            semantic: [ "if __expr and (rax.id & int64(0x8000000000000000)) == int64(0x8000000000000000): rdx.id = int64(0xffffffffffffffff)\nelse: rdx.id = int64(0)" ]
 
       - opcode: 0x9a
         mnemonic: call
@@ -1754,6 +2578,7 @@ instruction:
       - opcode: 0x9f
         mnemonic: lahf
         test_flags: [ sf, zf, af, pf, cf ]
+        semantic: *lahf
 
       - opcode: 0xa0
         mnemonic: mov
@@ -1777,26 +2602,26 @@ instruction:
 
       - opcode: 0xa4
         mnemonic: movs
-        operand: [ Yb, Xb ]
+        operand: [ Xb, Yb ] # Inversion needed here!
         test_flags: [ df ]
         semantic: *movs
 
       - opcode: 0xa5
         mnemonic: movs
-        operand: [ Yv, Xv ]
+        operand: [ Xv, Yv ] # Inversion needed here!
         test_flags: [ df ]
         semantic: *movs
 
       - opcode: 0xa6
         mnemonic: cmps
-        operand: [ Yb, Xb ]
+        operand: [ Xb, Yb ] # Inversion needed here!
         test_flags: [ df ]
         update_flags: [ of, sf, zf, af, pf, cf ]
         semantic: *cmps
 
       - opcode: 0xa7
         mnemonic: cmps
-        operand: [ Yb, Xb ]
+        operand: [ Xv, Yv ] # Inversion needed here!
         test_flags: [ df ]
         update_flags: [ of, sf, zf, af, pf, cf ]
         semantic: *cmps
@@ -1817,13 +2642,13 @@ instruction:
 
       - opcode: 0xaa
         mnemonic: stos
-        operand: [ Yb, AL ]
+        operand: [ AL, Yb ] # Inversion needed here!
         test_flags: [ df ]
         semantic: *stos
 
       - opcode: 0xab
         mnemonic: stos
-        operand: [ Yv, rAX ]
+        operand: [ rAX, Yv ] # Inversion needed here!
         test_flags: [ df ]
         semantic: *stos
 
@@ -1839,14 +2664,14 @@ instruction:
 
       - opcode: 0xae
         mnemonic: scas
-        operand: [ Yb, AL ]
+        operand: [ AL, Yb ] # Inversion needed here!
         test_flags: [ df ]
         update_flags: [ of, sf, zf, af, pf, cf ]
         semantic: *scas
 
       - opcode: 0xaf
         mnemonic: scas
-        operand: [ Yv, rAX ]
+        operand: [ rAX, Yv ] # Inversion needed here!
         test_flags: [ df ]
         update_flags: [ of, sf, zf, af, pf, cf ]
         semantic: *scas
@@ -2036,10 +2861,10 @@ instruction:
         reference: group_02
 
       - opcode: 0xc2
-        mnemonic: ret
+        mnemonic: retn
         operand: [ Iw ]
         operation_type: ['ret']
-        semantic: [ program.id = stack.mem, stack.id += stack.size, stack.id += op0.val ]
+        semantic: *retn
 
       - opcode: 0xc3
         mnemonic: ret
@@ -2131,6 +2956,7 @@ instruction:
         update_flags: [ sf, zf, pf ]
         clear_flags: [ of, af, cf ]
         attr: [ nm64 ]
+        semantic: *aam
 
       - opcode: 0xd5
         mnemonic: aad
@@ -2138,6 +2964,7 @@ instruction:
         update_flags: [ sf, zf, pf ]
         clear_flags: [ of, af, cf ]
         attr: [ nm64 ]
+        semantic: *aad
 
       - opcode: 0xd6
         mnemonic: salc
@@ -2361,7 +3188,7 @@ instruction:
 
           - mnemonic: syscall
             cpu_model: ">= X86_Arch_K6_2"
-            semantic: [ expr('syscall') ]
+            semantic: *syscall
 
       - opcode: 0x06
         mnemonic: clts
@@ -2373,6 +3200,7 @@ instruction:
 
           - mnemonic: sysret
             cpu_model: ">= X86_Arch_K6_2"
+            semantic: *sysret
 
       - opcode: 0x08
         mnemonic: invd
@@ -2425,24 +3253,27 @@ instruction:
             operand: [ Eb, Gb ]
             cpu_model: "== X86_Arch_80386"
 
-          - mnemonic: vmovups
+          - mnemonic: movups
             operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
+            semantic: *mov
 
-          - mnemonic: vmovupd
+          - mnemonic: movupd
             operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vmovss
-            operand: [ Vo, Mod ]
+          - mnemonic: movss
+            operand: [ Vo, Wod ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse"
+            semantic: *movss
 
-          - mnemonic: vmovsd
-            operand: [ Vo, Moq ]
+          - mnemonic: movsd
+            operand: [ Vo, Woq ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse2"
+            semantic: *movsd
 
       - opcode: 0x11
         sub_opcodes:
@@ -2450,24 +3281,27 @@ instruction:
             operand: [ Ev, Gv ]
             cpu_model: "== X86_Arch_80386"
 
-          - mnemonic: vmovups
+          - mnemonic: movups
             operand: [ Wx, Vx ]
             cpu_model: ">= X86_Arch_Sse"
+            semantic: *mov
 
-          - mnemonic: vmovupd
+          - mnemonic: movupd
             operand: [ Wx, Vx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vmovss
-            operand: [ Mo, Vod ]
+          - mnemonic: movss
+            operand: [ Wod, Vo ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse"
+            semantic: *movss
 
-          - mnemonic: vmovsd
-            operand: [ Mo, Voq ]
+          - mnemonic: movsd
+            operand: [ Woq, Vo ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse2"
+            semantic: *movsd
 
       - opcode: 0x12
         sub_opcodes:
@@ -2475,21 +3309,21 @@ instruction:
             operand: [ Gb, Ev ]
             cpu_model: "== X86_Arch_80386"
 
-          - mnemonic: vmovlps
-            operand: [ Vo, Ho, Moq ]
+          - mnemonic: movlps
+            operand: [ Vo, Woq ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vmovlpd
-            operand: [ Vo, Ho, Moq ]
+          - mnemonic: movlpd
+            operand: [ Vo, Woq ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vmovsldup
+          - mnemonic: movsldup
             operand: [ Vx, Wx ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse3"
 
-          - mnemonic: vmovddup
+          - mnemonic: movddup
             operand: [ Vo, Woq ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse3"
@@ -2500,24 +3334,24 @@ instruction:
             operand: [ Gv, Ev ]
             cpu_model: "== X86_Arch_80386"
 
-          - mnemonic: vmovlps
-            operand: [ Moq, Vo ]
+          - mnemonic: movlps
+            operand: [ Woq, Vo ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vmovlpd
-            operand: [ Moq, Vo ]
+          - mnemonic: movlpd
+            operand: [ Woq, Vo ]
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x14
         sub_opcodes:
           - invalid:
 
-          - mnemonic: vunpcklps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: unpcklps
+            operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vunpcklpd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: unpcklpd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -2525,12 +3359,12 @@ instruction:
         sub_opcodes:
           - invalid:
 
-          - mnemonic: vunpckhps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: unpckhps
+            operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vunpckhpd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: unpckhpd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -2538,16 +3372,16 @@ instruction:
         sub_opcodes:
           - invalid:
 
-          - mnemonic: vmovhps
-            operand: [ Vo, Ho, Moq ]
+          - mnemonic: movhps
+            operand: [ Vo, Woq ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vmovhpd
-            operand: [ Vo, Ho, Moq ]
+          - mnemonic: movhpd
+            operand: [ Vo, Woq ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vmovshdup
+          - mnemonic: movshdup
             operand: [ Vx, Wx ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse3"
@@ -2556,12 +3390,12 @@ instruction:
         sub_opcodes:
           - invalid:
 
-          - mnemonic: vmovhps
-            operand: [ Moq, Vo ]
+          - mnemonic: movhps
+            operand: [ Woq, Vo ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vmovhpd
-            operand: [ Moq, Vo ]
+          - mnemonic: movhpd
+            operand: [ Woq, Vo ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -2659,22 +3493,24 @@ instruction:
 
       - opcode: 0x28
         sub_opcodes:
-          - mnemonic: vmovaps
+          - mnemonic: movaps
             operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
+            semantic: *mov
 
-          - mnemonic: vmovapd
+          - mnemonic: movapd
             operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x29
         sub_opcodes:
-          - mnemonic: vmovaps
+          - mnemonic: movaps
             operand: [ Wx, Vx ]
             cpu_model: ">= X86_Arch_Sse"
+            semantic: *mov
 
-          - mnemonic: vmovapd
+          - mnemonic: movapd
             operand: [ Wx, Vx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
@@ -2699,23 +3535,23 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vcvtsi2ss
-            operand: [ Vo, Ho, Ey ]
+          - mnemonic: cvtsi2ss
+            operand: [ Vo, Ey ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vcvtsi2sd
-            operand: [ Vo, Ho, Ey ]
+          - mnemonic: cvtsi2sd
+            operand: [ Vo, Ey ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x2b
         sub_opcodes:
-          - mnemonic: vmovntps
+          - mnemonic: movntps
             operand: [ Mx, Vx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vmovntpd
+          - mnemonic: movntpd
             operand: [ Mx, Vx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
@@ -2741,12 +3577,12 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2_mmx"
 
-          - mnemonic: vcvttss2si
+          - mnemonic: cvttss2si
             operand: [ Gy, Wod ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vcvttsd2si
+          - mnemonic: cvttsd2si
             operand: [ Gy, Woq ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse2"
@@ -2762,34 +3598,34 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2_mmx"
 
-          - mnemonic: vcvtss2si
+          - mnemonic: cvtss2si
             operand: [ Gy, Wod ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vcvtsd2si
+          - mnemonic: cvtsd2si
             operand: [ Gy, Woq ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x2e
         sub_opcodes:
-          - mnemonic: vucomiss
+          - mnemonic: ucomiss
             operand: [ Vo, Wod ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vucomisd
+          - mnemonic: ucomisd
             operand: [ Vo, Woq ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x2f
         sub_opcodes:
-          - mnemonic: vcomiss
+          - mnemonic: comiss
             operand: [ Vo, Wod ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vcomisd
+          - mnemonic: comisd
             operand: [ Vo, Woq ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
@@ -2799,7 +3635,7 @@ instruction:
 
       - opcode: 0x31
         mnemonic: rdtsc
-        semantic: [ expr('read_timestamp') ]
+        semantic: *rdtsc
 
       - opcode: 0x32
         mnemonic: rdmsr
@@ -2810,11 +3646,12 @@ instruction:
       - opcode: 0x34
         mnemonic: sysenter
         attr: [ intel ]
-        semantic: [ expr('syscall') ]
+        semantic: *sysenter
 
       - opcode: 0x35
         mnemonic: sysexit
         attr: [ intel ]
+        semantic: *sysexit
 
       - opcode: 0x36
         sub_opcodes:
@@ -2998,262 +3835,264 @@ instruction:
 
       - opcode: 0x50
         sub_opcodes:
-          - mnemonic: vmovmskps
+          - mnemonic: movmskps
             operand: [ Gy, Ux ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vmovmskpd
+          - mnemonic: movmskpd
             operand: [ Gy, Ux ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x51
         sub_opcodes:
-          - mnemonic: vsqrtps
+          - mnemonic: sqrtps
             operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vsqrtpsd
+          - mnemonic: sqrtpsd
             operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vsqrtss
-            operand: [ Vo, Ho, Wod ]
+          - mnemonic: sqrtss
+            operand: [ Vo, Wod ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vsqrtsd
-            operand: [ Vo, Ho, Woq ]
+          - mnemonic: sqrtsd
+            operand: [ Vo, Woq ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x52
         sub_opcodes:
-          - mnemonic: vrsqrtps
+          - mnemonic: rsqrtps
             operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vrsqrtss
-            operand: [ Vo, Ho, Wod ]
+          - mnemonic: rsqrtss
+            operand: [ Vo, Wod ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse"
 
       - opcode: 0x53
         sub_opcodes:
-          - mnemonic: vrcpps
+          - mnemonic: rcpps
             operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vrcpss
-            operand: [ Vo, Ho, Wod ]
+          - mnemonic: rcpss
+            operand: [ Vo, Wod ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse"
 
       - opcode: 0x54
         sub_opcodes:
-          - mnemonic: vandps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: andps
+            operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vandpd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: andpd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x55
         sub_opcodes:
-          - mnemonic: vandnps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: andnps
+            operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vandnpd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: andnpd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x56
         sub_opcodes:
-          - mnemonic: vorps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: orps
+            operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vorpd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: orpd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse"
 
       - opcode: 0x57
         sub_opcodes:
-          - mnemonic: vxorps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: xorps
+            operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
+            semantic: *xorps
 
-          - mnemonic: vxorpd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: xorpd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x58
         sub_opcodes:
-          - mnemonic: vaddps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: addps
+            operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vaddpd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: addpd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vaddss
-            operand: [ Vo, Ho, Wod ]
+          - mnemonic: addss
+            operand: [ Vo, Wod ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse"
+            semantic: *addss
 
-          - mnemonic: vaddsd
-            operand: [ Vo, Ho, Woq ]
+          - mnemonic: addsd
+            operand: [ Vo, Woq ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x59
         sub_opcodes:
-          - mnemonic: vmulps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: mulps
+            operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vmulpd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: mulpd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vmulss
-            operand: [ Vo, Ho, Wod ]
+          - mnemonic: mulss
+            operand: [ Vo, Wod ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vmulsd
-            operand: [ Vo, Ho, Woq ]
+          - mnemonic: mulsd
+            operand: [ Vo, Woq ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x5a
         sub_opcodes:
-          - mnemonic: vcvtps2pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: cvtps2pd
+            operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vcvtpd2ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: cvtpd2ps
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vcvtss2sd
-            operand: [ Vo, Ho, Wod ]
+          - mnemonic: cvtss2sd
+            operand: [ Vo, Wod ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vcvtsd2ss
-            operand: [ Vo, Ho, Woq ]
+          - mnemonic: cvtsd2ss
+            operand: [ Vo, Woq ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x5b
         sub_opcodes:
-          - mnemonic: vcvtdq2ps
+          - mnemonic: cvtdq2ps
             operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vcvtps2dq
+          - mnemonic: cvtps2dq
             operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vcvttps2dq
+          - mnemonic: cvttps2dq
             operand: [ Vx, Wx ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x5c
         sub_opcodes:
-          - mnemonic: vsubps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: subps
+            operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vsubpd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: subpd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vsubss
-            operand: [ Vo, Ho, Wod ]
+          - mnemonic: subss
+            operand: [ Vo, Wod ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vsubsd
-            operand: [ Vo, Ho, Woq ]
+          - mnemonic: subsd
+            operand: [ Vo, Woq ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x5d
         sub_opcodes:
-          - mnemonic: vminps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: minps
+            operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vminpd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: minpd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vminss
-            operand: [ Vo, Ho, Wod ]
+          - mnemonic: minss
+            operand: [ Vo, Wod ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vminsd
-            operand: [ Vo, Ho, Woq ]
+          - mnemonic: minsd
+            operand: [ Vo, Woq ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x5e
         sub_opcodes:
-          - mnemonic: vdivps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: divps
+            operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vdivpd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: divpd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vdivss
-            operand: [ Vo, Ho, Wod ]
+          - mnemonic: divss
+            operand: [ Vo, Wod ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vdivsd
-            operand: [ Vo, Ho, Woq ]
+          - mnemonic: divsd
+            operand: [ Vo, Woq ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x5f
         sub_opcodes:
-          - mnemonic: vmaxps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: maxps
+            operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vmaxpd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: maxpd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vmaxss
-            operand: [ Vo, Ho, Wod ]
+          - mnemonic: maxss
+            operand: [ Vo, Wod ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vmaxsd
-            operand: [ Vo, Ho, Woq ]
+          - mnemonic: maxsd
+            operand: [ Vo, Woq ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -3263,19 +4102,19 @@ instruction:
             operand: [ Pq, Qd ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpupcklbw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pupcklbw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x61
         sub_opcodes:
-          - mnemonic: vpunpcklwd
+          - mnemonic: punpcklwd
             operand: [ Pq, Qd ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpunpcklwd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: punpcklwd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -3285,8 +4124,8 @@ instruction:
             operand: [ Pq, Qd ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpupckldq
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pupckldq
+            operand: [ Vx, Wx ]
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x63
@@ -3295,8 +4134,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpacksswb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: packsswb
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -3306,8 +4145,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpcmpgtb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pcmpgtb
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -3317,8 +4156,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpcmpgtw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pcmpgtw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -3328,8 +4167,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vcmpgtd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: cmpgtd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -3339,8 +4178,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpackuswb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: packuswb
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -3350,7 +4189,7 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpunpckhbw
+          - mnemonic: punpckhbw
             operand: [ Hx, Hx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
@@ -3361,8 +4200,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpunpckhwd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: punpckhwd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -3372,8 +4211,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpunpckhdq
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: punpckhdq
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -3383,8 +4222,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpackssdw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: packssdw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -3392,8 +4231,8 @@ instruction:
         sub_opcodes:
           - invalid:
 
-          - mnemonic: vpunpcklqdq
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: punpcklqdq
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -3401,8 +4240,8 @@ instruction:
         sub_opcodes:
           - invalid:
 
-          - mnemonic: vpunpckhqdq
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: punpckhqdq
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -3416,12 +4255,13 @@ instruction:
             operand: [ Pq, Ey ]
             attr: [ m64, rexw ]
 
-          - mnemonic: vmovd
-            operand: [ Vo, Ey ]
+          - mnemonic: movd
+            operand: [ Vo, Ed ]
             attr: [ op_size ]
             cpu_model: ">= X86_Arch_Sse2"
+            semantic: *movd_sse
 
-          - mnemonic: vmovq
+          - mnemonic: movq
             operand: [ Vo, Ey ]
             attr: [ m64, rexw, op_size ]
             cpu_model: ">= X86_Arch_Sse2"
@@ -3432,12 +4272,12 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vmodqa
+          - mnemonic: modqa
             operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vmovdqu
+          - mnemonic: movdqu
             operand: [ Vx, Wx ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse"
@@ -3448,29 +4288,29 @@ instruction:
             operand: [ Pq, Qq, Ib ]
             cpu_model: ">= X86_Arch_Mmx_sse"
 
-          - mnemonic: vpshufd
+          - mnemonic: pshufd
             operand: [ Vx, Wx, Ib ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vpshufhw
+          - mnemonic: pshufhw
             operand: [ Vx, Wx, Ib ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vpshuflw
+          - mnemonic: pshuflw
             operand: [ Vx, Wx, Ib ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0x71
-        invalid:
+        reference: group_12
 
       - opcode: 0x72
-        invalid:
+        reference: group_13
 
       - opcode: 0x73
-        invalid:
+        reference: group_14
 
       - opcode: 0x74
         sub_opcodes:
@@ -3478,8 +4318,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpcmpeqb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pcmpeqb
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -3489,8 +4329,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpcmpeqw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pcmpeqw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -3500,8 +4340,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpcmpeqd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pcmpeqd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -3510,12 +4350,12 @@ instruction:
           - mnemonic: emms
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vzeroupper
+          - mnemonic: zeroupper
             cpu_model: ">= X86_Arch_Avx"
 
       - opcode: 0x78
         sub_opcodes:
-          - mnemonic: vmread
+          - mnemonic: mread
             operand: [ Ey, Gy ]
 
           - mnemonic: extrq
@@ -3545,13 +4385,13 @@ instruction:
         sub_opcodes:
           - invalid:
 
-          - mnemonic: vhaddpd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: haddpd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse3"
 
-          - mnemonic: vhaddps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: haddps
+            operand: [ Vx, Wx ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse3"
 
@@ -3559,13 +4399,13 @@ instruction:
         sub_opcodes:
           - invalid:
 
-          - mnemonic: vhsubpd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: hsubpd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse3"
 
-          - mnemonic: vhsubps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: hsubps
+            operand: [ Vx, Wx ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse3"
 
@@ -3575,12 +4415,13 @@ instruction:
             operand: [ Ey, Pq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vmovd
-            operand: [ Ey, Vo ]
+          - mnemonic: movd
+            operand: [ Ed, Vo ]
             attr: [ op_size ]
             cpu_model: ">= X86_Arch_Sse2"
+            semantic: *movd_sse
 
-          - mnemonic: vmovq
+          - mnemonic: movq
             operand: [ Vo, Woq ]
             attr: [ rep ]
             cpu_model: ">= X86_Arch_Sse2"
@@ -3591,12 +4432,12 @@ instruction:
             operand: [ Qq, Pq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vmovdqa
+          - mnemonic: movdqa
             operand: [ Wx, Vx ]
             attr: [ op_size ]
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vmovdqu
+          - mnemonic: movdqu
             operand: [ Wx, Vx ]
             attr: [ rep ]
             cpu_model: ">= X86_Arch_Sse2"
@@ -3873,6 +4714,7 @@ instruction:
 
       - opcode: 0xa2
         mnemonic: cpuid
+        semantic: *cpuid
 
       - opcode: 0xa3
         mnemonic: bt
@@ -4092,8 +4934,8 @@ instruction:
             operand: [ Pq, Mw, Ib ]
             cpu_model: ">= X86_Arch_Mmx_sse"
 
-          - mnemonic: vpinsrw
-            operand: [ Vo, Ho, Mw, Ib ]
+          - mnemonic: pinsrw
+            operand: [ Vo, Mw, Ib ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4103,19 +4945,19 @@ instruction:
             operand: [ Gy, Nq, Ib ]
             cpu_model: ">= X86_Arch_Mmx_sse"
 
-          - mnemonic: vpextrw
+          - mnemonic: pextrw
             operand: [ Gy, Uo, Ib ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
       - opcode: 0xc6
         sub_opcodes:
-          - mnemonic: vshufps
-            operand: [ Vx, Hx, Wx, Ib ]
+          - mnemonic: shufps
+            operand: [ Vx, Wx, Ib ]
             cpu_model: ">= X86_Arch_Sse"
 
-          - mnemonic: vshufpd
-            operand: [ Vx, Hx, Wx, Ib ]
+          - mnemonic: shufpd
+            operand: [ Vx, Wx, Ib ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4230,13 +5072,13 @@ instruction:
         sub_opcodes:
           - invalid:
 
-          - mnemonic: vaddsubps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: addsubps
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse3"
 
-          - mnemonic: vaddsubps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: addsubps
+            operand: [ Vx, Wx ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse3"
 
@@ -4246,8 +5088,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpsrlw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psrlw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4257,8 +5099,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpsrld
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psrld
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4268,8 +5110,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpsrld
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psrld
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4279,8 +5121,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx_sse2"
 
-          - mnemonic: vpaddq
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: paddq
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4290,8 +5132,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpmullw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmullw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4299,7 +5141,7 @@ instruction:
         sub_opcodes:
           - invalid:
 
-          - mnemonic: vmovq
+          - mnemonic: movq
             operand: [ Woq, Vo ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
@@ -4320,7 +5162,7 @@ instruction:
             operand: [ Gy, Nq ]
             cpu_model: ">= X86_Arch_Mmx_sse"
 
-          - mnemonic: vpmovmskb
+          - mnemonic: pmovmskb
             operand: [ Gy, Ux ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
@@ -4331,8 +5173,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpsubusb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psubusb
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4342,8 +5184,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpsubusw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psubusw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4353,8 +5195,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpminub
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pminub
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4364,8 +5206,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpand
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pand
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4375,8 +5217,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpaddusb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: paddusb
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4386,8 +5228,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpaddusw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: paddusw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4397,8 +5239,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpmaxub
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmaxub
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4408,8 +5250,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpandn
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pandn
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4419,8 +5261,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx_sse"
 
-          - mnemonic: vpavgb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pavgb
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4430,8 +5272,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpsraw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psraw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4441,8 +5283,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpsrad
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psrad
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4452,8 +5294,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx_sse"
 
-          - mnemonic: vpavgw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pavgw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4463,8 +5305,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx_sse"
 
-          - mnemonic: vpmulhuw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmulhuw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4474,8 +5316,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpmulhw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmulhw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4483,17 +5325,17 @@ instruction:
         sub_opcodes:
           - invalid:
 
-          - mnemonic: vcvttpd2dq
+          - mnemonic: cvttpd2dq
             operand: [ Vo, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vcvtdq2pd
+          - mnemonic: cvtdq2pd
             operand: [ Vo, Woq ]
             prefix: 0xf3
             cpu_model: ">= X86_Arch_Sse2"
 
-          - mnemonic: vcvtpd2dq
+          - mnemonic: cvtpd2dq
             operand: [ Vo, Wx ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse2"
@@ -4504,7 +5346,7 @@ instruction:
             operand: [ Mq, Pq ]
             cpu_model: ">= X86_Arch_Mmx_sse"
 
-          - mnemonic: vmovntdq
+          - mnemonic: movntdq
             operand: [ Mx, Vx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
@@ -4515,8 +5357,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpsubsb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psubsb
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4526,8 +5368,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpsubsw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psubsw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4537,8 +5379,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpminsw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pminsw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4548,8 +5390,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpor
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: por
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4559,8 +5401,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpaddsb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: paddsb
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4570,8 +5412,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpaddsw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: paddsw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4581,8 +5423,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpmaxsw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmaxsw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4592,8 +5434,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpxor
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pxor
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4601,7 +5443,7 @@ instruction:
         sub_opcodes:
           - invalid:
 
-          - mnemonic: vlddqu
+          - mnemonic: lddqu
             operand: [ Vx, Mx ]
             prefix: 0xf2
             cpu_model: ">= X86_Arch_Sse3"
@@ -4612,8 +5454,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpsllw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psllw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4623,8 +5465,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vsplld
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: splld
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4634,8 +5476,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vspllq
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: spllq
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4645,8 +5487,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx_sse2"
 
-          - mnemonic: vpmuludq
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmuludq
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4656,8 +5498,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpmaddwd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmaddwd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4667,8 +5509,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx_sse"
 
-          - mnemonic: vpsadbw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psadbw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4678,7 +5520,7 @@ instruction:
             operand: [ Pq, Nq ]
             cpu_model: ">= X86_Arch_Mmx_sse"
 
-          - mnemonic: vmaskmovdqu
+          - mnemonic: maskmovdqu
             operand: [ Vo, Uo ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
@@ -4689,8 +5531,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpsubb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psubb
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4700,8 +5542,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpsubw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psubw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4711,8 +5553,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpsubd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psubd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4722,8 +5564,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpsubq
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psubq
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4733,8 +5575,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpaddb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: paddb
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4744,8 +5586,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpaddw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: paddw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -4755,8 +5597,8 @@ instruction:
             operand: [ Pq, Qq ]
             cpu_model: ">= X86_Arch_Mmx"
 
-          - mnemonic: vpaddd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: paddd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse2"
 
@@ -5600,14 +6442,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vpshufb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pshufb
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpshufb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pshufb
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -5622,14 +6464,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vphaddw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: phaddw
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vphaddw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: phaddw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -5644,14 +6486,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vphaddd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: phaddd
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vphaddd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: phaddd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -5666,14 +6508,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vphaddsw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: phaddsw
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vphaddsw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: phaddsw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -5688,14 +6530,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vpmaddubsw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmaddubsw
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmaddubsw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmaddubsw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -5710,14 +6552,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vphsubw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: phsubw
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vphsubw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: phsubw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -5732,14 +6574,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vphsubd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: phsubd
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vphsubd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: phsubd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -5754,14 +6596,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vphsubsw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: phsubsw
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vphsubsw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: phsubsw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -5776,14 +6618,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vpsignb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psignb
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpsignb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psignb
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -5798,14 +6640,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vpsignw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psignw
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpsignw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psignw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -5820,14 +6662,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vpsignd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psignd
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpsignd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psignd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -5842,40 +6684,40 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vpmulhrsw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmulhrsw
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmulhrsw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmulhrsw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
       - opcode: 0x0c
-        mnemonic: vpermilps
-        operand: [ Vx, Hx, Wx ]
+        mnemonic: permilps
+        operand: [ Vx, Wx ]
         attr: [ w0 ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx"
 
       - opcode: 0x0d
-        mnemonic: vpermilpd
-        operand: [ Vx, Hx, Wx ]
+        mnemonic: permilpd
+        operand: [ Vx, Wx ]
         attr: [ w0 ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx"
 
       - opcode: 0x0e
-        mnemonic: vtestps
+        mnemonic: testps
         operand: [ Vx, Wx ]
         attr: [ nv, w0 ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx"
 
       - opcode: 0x0f
-        mnemonic: vtestpd
+        mnemonic: testpd
         operand: [ Vx, Wx ]
         attr: [ nv, w0 ]
         prefix: 0x66
@@ -5895,13 +6737,13 @@ instruction:
 
       - opcode: 0x13
         sub_opcodes:
-          - mnemonic: vcvtph2ps
+          - mnemonic: cvtph2ps
             operand: [ Vo, Woq ]
             attr: [ vl0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_F16c"
 
-          - mnemonic: vcvtph2ps
+          - mnemonic: cvtph2ps
             operand: [ Vy, Woo ]
             attr: [ vl1 ]
             prefix: 0x66
@@ -5920,7 +6762,7 @@ instruction:
         cpu_model: ">= X86_Arch_Sse41"
 
       - opcode: 0x16
-        mnemonic: vpermps
+        mnemonic: permps
         operand: [ Vy, Hy, Wy ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx2"
@@ -5932,7 +6774,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vptest
+          - mnemonic: ptest
             operand: [ Vx, Wx ]
             attr: [ nv ]
             prefix: 0x66
@@ -5940,13 +6782,13 @@ instruction:
 
       - opcode: 0x18
         sub_opcodes:
-          - mnemonic: vbroadcastss
-            operand: [ Vx, Mod ]
+          - mnemonic: broadcastss
+            operand: [ Vx, Uod ]
             attr: [ nc, w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vbroadcastss
+          - mnemonic: broadcastss
             operand: [ Vx, Uo ]
             attr: [ nc, w0 ]
             prefix: 0x66
@@ -5954,21 +6796,21 @@ instruction:
 
       - opcode: 0x19
         sub_opcodes:
-          - mnemonic: vbroadcastsd
-            operand: [ Vy, Moq ]
+          - mnemonic: broadcastsd
+            operand: [ Vy, Woq ]
             attr: [ nc, w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vbroadcastsd
+          - mnemonic: broadcastsd
             operand: [ Vy, Uo ]
             attr: [ nc, w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
       - opcode: 0x1a
-        mnemonic: vbroadcastf128
-        operand: [ Vy, Mo ]
+        mnemonic: broadcastf128
+        operand: [ Vy, Uo ]
         attr: [ nv, w0 ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx"
@@ -5987,13 +6829,13 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vpabsb
+          - mnemonic: pabsb
             operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpabsb
+          - mnemonic: pabsb
             operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6009,13 +6851,13 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vpabsw
+          - mnemonic: pabsw
             operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpabsw
+          - mnemonic: pabsw
             operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6031,13 +6873,13 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vpabsd
+          - mnemonic: pabsd
             operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpabsd
+          - mnemonic: pabsd
             operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6052,13 +6894,13 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmovsxbw
+          - mnemonic: pmovsxbw
             operand: [ Vo, Woq ]
             attr: [ ny, nv ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmovsxbw
+          - mnemonic: pmovsxbw
             operand: [ Vy, Woo ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6070,13 +6912,13 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmovsxbd
+          - mnemonic: pmovsxbd
             operand: [ Vo, Wod ]
             attr: [ ny, nv ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmovsxbd
+          - mnemonic: pmovsxbd
             operand: [ Vy, Woq ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6088,13 +6930,13 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmovsxbq
+          - mnemonic: pmovsxbq
             operand: [ Vo, Wow ]
             attr: [ ny, nv ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmovsxbq
+          - mnemonic: pmovsxbq
             operand: [ Vy, Wod ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6106,13 +6948,13 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmovsxwd
+          - mnemonic: pmovsxwd
             operand: [ Vo, Woq ]
             attr: [ ny, nv ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmovsxwd
+          - mnemonic: pmovsxwd
             operand: [ Vy, Woo ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6124,13 +6966,13 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmovsxwq
+          - mnemonic: pmovsxwq
             operand: [ Vo, Wod ]
             attr: [ ny, nv ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmovsxwq
+          - mnemonic: pmovsxwq
             operand: [ Vy, Woq ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6142,13 +6984,13 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmovsxdq
+          - mnemonic: pmovsxdq
             operand: [ Vo, Wow ]
             attr: [ ny, nv ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmovsxdq
+          - mnemonic: pmovsxdq
             operand: [ Vy, Wod ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6166,14 +7008,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmuldq
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmuldq
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmuldq
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmuldq
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -6184,14 +7026,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpcmpeqq
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pcmpeqq
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpcmpeqq
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pcmpeqq
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -6202,13 +7044,13 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vmovntdqa
+          - mnemonic: movntdqa
             operand: [ Vx, Mx ]
             attr: [ nv, ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vmovntdqa
+          - mnemonic: movntdqa
             operand: [ Vx, Mx ]
             attr: [ nv ]
             prefix: 0x66
@@ -6221,41 +7063,41 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpackusdw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: packusdw
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpackusdw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: packusdw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
       - opcode: 0x2c
-        mnemonic: vmaskmovps
-        operand: [ Vx, Hx, Mx ]
+        mnemonic: maskmovps
+        operand: [ Vx, Mx ]
         attr: [ w0 ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx"
 
       - opcode: 0x2d
-        mnemonic: vmaskmovpd
-        operand: [ Vx, Hx, Mx ]
+        mnemonic: maskmovpd
+        operand: [ Vx, Mx ]
         attr: [ w0 ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx"
 
       - opcode: 0x2e
-        mnemonic: vmaskmovps
-        operand: [ Mx, Hx, Vx ]
+        mnemonic: maskmovps
+        operand: [ Mx, Vx ]
         attr: [ w0 ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx"
 
       - opcode: 0x2f
-        mnemonic: vmaskmovpd
-        operand: [ Mx, Hx, Vx ]
+        mnemonic: maskmovpd
+        operand: [ Mx, Vx ]
         attr: [ w0 ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx"
@@ -6267,13 +7109,13 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmovzxbw
+          - mnemonic: pmovzxbw
             operand: [ Vo, Woq ]
             attr: [ ny, nv ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmovzxbw
+          - mnemonic: pmovzxbw
             operand: [ Vy, Woo ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6285,13 +7127,13 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmovzxbd
+          - mnemonic: pmovzxbd
             operand: [ Vo, Wod ]
             attr: [ ny, nv ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmovzxbd
+          - mnemonic: pmovzxbd
             operand: [ Vy, Woq ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6303,13 +7145,13 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmovzxbq
+          - mnemonic: pmovzxbq
             operand: [ Vo, Wow ]
             attr: [ ny, nv ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmovzxbq
+          - mnemonic: pmovzxbq
             operand: [ Vy, Wod ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6321,13 +7163,13 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmovzxwd
+          - mnemonic: pmovzxwd
             operand: [ Vo, Woq ]
             attr: [ ny, nv ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmovzxwd
+          - mnemonic: pmovzxwd
             operand: [ Vy, Woo ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6339,13 +7181,13 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmovzxwq
+          - mnemonic: pmovzxwq
             operand: [ Vo, Wod ]
             attr: [ ny, nv ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmovzxwq
+          - mnemonic: pmovzxwq
             operand: [ Vy, Woq ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6357,19 +7199,19 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmovzxdq
+          - mnemonic: pmovzxdq
             operand: [ Vo, Woq ]
             attr: [ ny, nv ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmovzxdq
+          - mnemonic: pmovzxdq
             operand: [ Vy, Woo ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
       - opcode: 0x36
-        mnemonic: vpermd
+        mnemonic: permd
         operand: [ Vy, Hy, Wy ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx2"
@@ -6381,8 +7223,8 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse42"
 
-          - mnemonic: vpcmpgtq
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pcmpgtq
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
@@ -6394,14 +7236,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpminsb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pminsb
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpminsb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pminsb
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -6412,14 +7254,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpminsd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pminsd
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpminsd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pminsd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -6430,14 +7272,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpminuw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pminuw
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpminuw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pminuw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -6448,14 +7290,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpminud
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pminud
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpminud
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pminud
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -6466,14 +7308,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmaxsb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmaxsb
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmaxsb
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmaxsb
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -6484,14 +7326,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmaxsd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmaxsd
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmaxsd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmaxsd
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -6502,14 +7344,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmaxuw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmaxuw
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmaxuw
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmaxuw
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -6520,14 +7362,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmaxud
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmaxud
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmaxud
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmaxud
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -6538,14 +7380,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpmulld
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmulld
+            operand: [ Vx, Wx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpmulld
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: pmulld
+            operand: [ Vx, Wx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -6556,7 +7398,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vphminposuw
+          - mnemonic: phminposuw
             operand: [ Vo, Wo ]
             attr: [ ny, nv ]
             prefix: 0x66
@@ -6573,35 +7415,35 @@ instruction:
 
       - opcode: 0x45
         sub_opcodes:
-          - mnemonic: vpsrlvd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psrlvd
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
-          - mnemonic: vpsrlvq
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psrlvq
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
       - opcode: 0x46
-        mnemonic: vpsravd
-        operand: [ Vx, Hx, Wx ]
+        mnemonic: psravd
+        operand: [ Vx, Wx ]
         attr: [ w0 ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx2"
 
       - opcode: 0x47
         sub_opcodes:
-          - mnemonic: vpsllvd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psllvd
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
-          - mnemonic: vpsllvq
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: psllvq
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6655,22 +7497,22 @@ instruction:
         invalid:
 
       - opcode: 0x58
-        mnemonic: vpbroadcastd
-        operand: [ Vx, Mod ]
+        mnemonic: pbroadcastd
+        operand: [ Vx, Uod ]
         attr: [ nv, w0 ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx2"
 
       - opcode: 0x59
-        mnemonic: vpbroadcastq
-        operand: [ Vx, Moq ]
+        mnemonic: pbroadcastq
+        operand: [ Vx, Woq ]
         attr: [ nv, w0 ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx2"
 
       - opcode: 0x5a
-        mnemonic: vbroadcasti128
-        operand: [ Vy, Mo ]
+        mnemonic: broadcasti128
+        operand: [ Vy, Uo ]
         attr: [ nv, w0 ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx2"
@@ -6763,15 +7605,15 @@ instruction:
         invalid:
 
       - opcode: 0x78
-        mnemonic: vpbroadcastb
-        operand: [ Vx, Mo, b ]
+        mnemonic: pbroadcastb
+        operand: [ Vx, Uo, b ]
         attr: [ nv ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx2"
 
       - opcode: 0x79
-        mnemonic: vpbroadcastw
-        operand: [ Vx, Mo, w ]
+        mnemonic: pbroadcastw
+        operand: [ Vx, Uo, w ]
         attr: [ nv ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx2"
@@ -6796,19 +7638,19 @@ instruction:
 
       - opcode: 0x80
         mnemonic: invept
-        operand: [ Gy, Mo ]
+        operand: [ Gy, Uo ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Vmx"
 
       - opcode: 0x81
         mnemonic: invvpid
-        operand: [ Gy, Mo ]
+        operand: [ Gy, Uo ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Vmx"
 
       - opcode: 0x82
         mnemonic: invpcid
-        operand: [ Gy, Mo ]
+        operand: [ Gy, Uo ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Invpcid"
 
@@ -6841,14 +7683,14 @@ instruction:
 
       - opcode: 0x8c
         sub_opcodes:
-          - mnemonic: vpmaskmovd
-            operand: [ Vx, Hx, Mx ]
+          - mnemonic: pmaskmovd
+            operand: [ Vx, Mx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
-          - mnemonic: vpmaskmovq
-            operand: [ Vx, Hx, Mx ]
+          - mnemonic: pmaskmovq
+            operand: [ Vx, Mx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6858,14 +7700,14 @@ instruction:
 
       - opcode: 0x8e
         sub_opcodes:
-          - mnemonic: vpmaskmovd
-            operand: [ Mx, Hx, Vx ]
+          - mnemonic: pmaskmovd
+            operand: [ Mx, Vx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
-          - mnemonic: vpmaskmovq
-            operand: [ Mx, Hx, Vx ]
+          - mnemonic: pmaskmovq
+            operand: [ Mx, Vx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -6875,13 +7717,13 @@ instruction:
 
       - opcode: 0x90
         sub_opcodes:
-          - mnemonic: vpgatherdd
+          - mnemonic: pgatherdd
             operand: [ Vx, Md, x, Hx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
-          - mnemonic: vpgatherdq
+          - mnemonic: pgatherdq
             operand: [ Vx, Mqo, Hx ]
             attr: [ w1 ]
             prefix: 0x66
@@ -6889,13 +7731,13 @@ instruction:
 
       - opcode: 0x91
         sub_opcodes:
-          - mnemonic: vpgatherqd
+          - mnemonic: pgatherqd
             operand: [ Vo, Md, x, Ho ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
-          - mnemonic: vpgatherqq
+          - mnemonic: pgatherqq
             operand: [ Vx, Mq, x, Hx ]
             attr: [ w1 ]
             prefix: 0x66
@@ -6903,13 +7745,13 @@ instruction:
 
       - opcode: 0x92
         sub_opcodes:
-          - mnemonic: vpgatherdps
+          - mnemonic: pgatherdps
             operand: [ Vx, Md, x, Hx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
-          - mnemonic: vpgatherdpd
+          - mnemonic: pgatherdpd
             operand: [ Vx, Mqo, Hx ]
             attr: [ w1 ]
             prefix: 0x66
@@ -6917,13 +7759,13 @@ instruction:
 
       - opcode: 0x93
         sub_opcodes:
-          - mnemonic: vpgatherqps
+          - mnemonic: pgatherqps
             operand: [ Vo, Md, x, Ho ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
-          - mnemonic: vpgatherqpd
+          - mnemonic: pgatherqpd
             operand: [ Vx, Mq, x, Hx ]
             attr: [ w1 ]
             prefix: 0x66
@@ -6937,55 +7779,55 @@ instruction:
 
       - opcode: 0x96
         sub_opcodes:
-          - mnemonic: vfmaddsub132ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmaddsub132ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmaddsub132pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmaddsub132pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0x97
         sub_opcodes:
-          - mnemonic: vfmsubadd132ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmsubadd132ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmsubadd132pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmsubadd132pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0x98
         sub_opcodes:
-          - mnemonic: vfmadd132ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmadd132ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmadd132pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmadd132pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0x99
         sub_opcodes:
-          - mnemonic: vfmadd132ss
+          - mnemonic: fmadd132ss
             operand: [ Vo, Ho, Wd ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmadd132sd
+          - mnemonic: fmadd132sd
             operand: [ Vo, Ho, Wq ]
             attr: [ w1 ]
             prefix: 0x66
@@ -6993,27 +7835,27 @@ instruction:
 
       - opcode: 0x9a
         sub_opcodes:
-          - mnemonic: vfmsub132ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmsub132ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmsub132pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmsub132pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0x9b
         sub_opcodes:
-          - mnemonic: vfmsub132ss
+          - mnemonic: fmsub132ss
             operand: [ Vo, Ho, Wd ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmsub132sd
+          - mnemonic: fmsub132sd
             operand: [ Vo, Ho, Wq ]
             attr: [ w1 ]
             prefix: 0x66
@@ -7021,27 +7863,27 @@ instruction:
 
       - opcode: 0x9c
         sub_opcodes:
-          - mnemonic: vfnmadd132ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fnmadd132ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfnmadd132pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fnmadd132pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0x9d
         sub_opcodes:
-          - mnemonic: vfnmadd132ss
+          - mnemonic: fnmadd132ss
             operand: [ Vo, Ho, Wd ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfnmadd132sd
+          - mnemonic: fnmadd132sd
             operand: [ Vo, Ho, Wq ]
             attr: [ w1 ]
             prefix: 0x66
@@ -7049,27 +7891,27 @@ instruction:
 
       - opcode: 0x9e
         sub_opcodes:
-          - mnemonic: vfnmsub132ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fnmsub132ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfnmsub132pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fnmsub132pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0x9f
         sub_opcodes:
-          - mnemonic: vfnmsub132ss
+          - mnemonic: fnmsub132ss
             operand: [ Vo, Ho, Wd ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfnmsub132sd
+          - mnemonic: fnmsub132sd
             operand: [ Vo, Ho, Wq ]
             attr: [ w1 ]
             prefix: 0x66
@@ -7095,55 +7937,55 @@ instruction:
 
       - opcode: 0xa6
         sub_opcodes:
-          - mnemonic: vfmaddsub213ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmaddsub213ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmaddsub213pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmaddsub213pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0xa7
         sub_opcodes:
-          - mnemonic: vfmsubadd213ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmsubadd213ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmsubadd213pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmsubadd213pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0xa8
         sub_opcodes:
-          - mnemonic: vfmadd213ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmadd213ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmadd213pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmadd213pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0xa9
         sub_opcodes:
-          - mnemonic: vfmadd213ss
+          - mnemonic: fmadd213ss
             operand: [ Vo, Ho, Wd ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmadd213sd
+          - mnemonic: fmadd213sd
             operand: [ Vo, Ho, Wq ]
             attr: [ w1 ]
             prefix: 0x66
@@ -7151,27 +7993,27 @@ instruction:
 
       - opcode: 0xaa
         sub_opcodes:
-          - mnemonic: vfmsub213ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmsub213ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmsub213pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmsub213pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0xab
         sub_opcodes:
-          - mnemonic: vfmsub213ss
+          - mnemonic: fmsub213ss
             operand: [ Vo, Ho, Wd ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmsub213sd
+          - mnemonic: fmsub213sd
             operand: [ Vo, Ho, Wq ]
             attr: [ w1 ]
             prefix: 0x66
@@ -7179,27 +8021,27 @@ instruction:
 
       - opcode: 0xac
         sub_opcodes:
-          - mnemonic: vfnmadd213ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fnmadd213ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfnmadd213pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fnmadd213pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0xad
         sub_opcodes:
-          - mnemonic: vfnmadd213ss
+          - mnemonic: fnmadd213ss
             operand: [ Vo, Ho, Wd ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfnmadd213sd
+          - mnemonic: fnmadd213sd
             operand: [ Vo, Ho, Wq ]
             attr: [ w1 ]
             prefix: 0x66
@@ -7207,27 +8049,27 @@ instruction:
 
       - opcode: 0xae
         sub_opcodes:
-          - mnemonic: vfnmsub213ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fnmsub213ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfnmsub213pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fnmsub213pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0xaf
         sub_opcodes:
-          - mnemonic: vfnmsub213ss
+          - mnemonic: fnmsub213ss
             operand: [ Vo, Ho, Wd ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfnmsub213sd
+          - mnemonic: fnmsub213sd
             operand: [ Vo, Ho, Wq ]
             attr: [ w1 ]
             prefix: 0x66
@@ -7253,55 +8095,55 @@ instruction:
 
       - opcode: 0xb6
         sub_opcodes:
-          - mnemonic: vfmaddsub231ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmaddsub231ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmaddsub231pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmaddsub231pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0xb7
         sub_opcodes:
-          - mnemonic: vfmsubadd231ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmsubadd231ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmsubadd231pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmsubadd231pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0xb8
         sub_opcodes:
-          - mnemonic: vfmadd231ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmadd231ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmadd231pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmadd231pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0xb9
         sub_opcodes:
-          - mnemonic: vfmadd231ss
+          - mnemonic: fmadd231ss
             operand: [ Vo, Ho, Wd ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmadd231sd
+          - mnemonic: fmadd231sd
             operand: [ Vo, Ho, Wq ]
             attr: [ w1 ]
             prefix: 0x66
@@ -7309,27 +8151,27 @@ instruction:
 
       - opcode: 0xba
         sub_opcodes:
-          - mnemonic: vfmsub231ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmsub231ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmsub231pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fmsub231pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0xbb
         sub_opcodes:
-          - mnemonic: vfmsub231ss
+          - mnemonic: fmsub231ss
             operand: [ Vo, Ho, Wd ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfmsub231sd
+          - mnemonic: fmsub231sd
             operand: [ Vo, Ho, Wq ]
             attr: [ w1 ]
             prefix: 0x66
@@ -7337,27 +8179,27 @@ instruction:
 
       - opcode: 0xbc
         sub_opcodes:
-          - mnemonic: vfnmadd231ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fnmadd231ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfnmadd231pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fnmadd231pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0xbd
         sub_opcodes:
-          - mnemonic: vfnmadd231ss
+          - mnemonic: fnmadd231ss
             operand: [ Vo, Ho, Wd ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfnmadd231sd
+          - mnemonic: fnmadd231sd
             operand: [ Vo, Ho, Wq ]
             attr: [ w1 ]
             prefix: 0x66
@@ -7365,27 +8207,27 @@ instruction:
 
       - opcode: 0xbe
         sub_opcodes:
-          - mnemonic: vfnmsub231ps
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fnmsub231ps
+            operand: [ Vx, Wx ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfnmsub231pd
-            operand: [ Vx, Hx, Wx ]
+          - mnemonic: fnmsub231pd
+            operand: [ Vx, Wx ]
             attr: [ w1 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
       - opcode: 0xbf
         sub_opcodes:
-          - mnemonic: vfnmsub231ss
+          - mnemonic: fnmsub231ss
             operand: [ Vo, Ho, Wd ]
             attr: [ w0 ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Fma"
 
-          - mnemonic: vfnmsub231sd
+          - mnemonic: fnmsub231sd
             operand: [ Vo, Ho, Wq ]
             attr: [ w1 ]
             prefix: 0x66
@@ -7480,7 +8322,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Aes"
 
-          - mnemonic: vaesimc
+          - mnemonic: aesimc
             operand: [ Vo, Wo ]
             attr: [ nv, ny ]
             prefix: 0x66
@@ -7494,7 +8336,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Aes"
 
-          - mnemonic: vaesenc
+          - mnemonic: aesenc
             operand: [ Vo, Ho, Wo ]
             attr: [ ny ]
             prefix: 0x66
@@ -7508,7 +8350,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Aes"
 
-          - mnemonic: vaesenclast
+          - mnemonic: aesenclast
             operand: [ Vo, Ho, Wo ]
             attr: [ ny ]
             prefix: 0x66
@@ -7522,7 +8364,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Aes"
 
-          - mnemonic: vaesdec
+          - mnemonic: aesdec
             operand: [ Vo, Ho, Wo ]
             attr: [ ny ]
             prefix: 0x66
@@ -7536,7 +8378,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Aes"
 
-          - mnemonic: vaesdeclast
+          - mnemonic: aesdeclast
             operand: [ Vo, Ho, Wo ]
             attr: [ ny ]
             prefix: 0x66
@@ -7726,20 +8568,20 @@ instruction:
 
     table_3_3A:
       - opcode: 0x00
-        mnemonic: vpermq
+        mnemonic: permq
         operand: [ Vy, Wy, Ib ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx2"
 
       - opcode: 0x01
-        mnemonic: vpermd
+        mnemonic: permd
         operand: [ Vy, Wy, Ib ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx2"
 
       - opcode: 0x02
-        mnemonic: vpblendd
-        operand: [ Vx, Hx, Wx, Ib ]
+        mnemonic: pblendd
+        operand: [ Vx, Wx, Ib ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx2"
 
@@ -7747,19 +8589,19 @@ instruction:
         invalid:
 
       - opcode: 0x04
-        mnemonic: vpermilps
+        mnemonic: permilps
         operand: [ Vx, Wx, Ib ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx"
 
       - opcode: 0x05
-        mnemonic: vpermilpd
+        mnemonic: permilpd
         operand: [ Vx, Wx, Ib ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx"
 
       - opcode: 0x06
-        mnemonic: vperm2f128
+        mnemonic: perm2f128
         operand: [ Vy, Hy, Wy, Ib ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx"
@@ -7774,7 +8616,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vroundps
+          - mnemonic: roundps
             operand: [ Vx, Wx, Ib ]
             attr: [ nv ]
             prefix: 0x66
@@ -7787,7 +8629,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vroundpd
+          - mnemonic: roundpd
             operand: [ Vx, Wx, Ib ]
             attr: [ nv ]
             prefix: 0x66
@@ -7800,7 +8642,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vroundss
+          - mnemonic: roundss
             operand: [ Vo, Ho, Woq, Ib ]
             attr: [ ny ]
             prefix: 0x66
@@ -7813,7 +8655,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vroundsd
+          - mnemonic: roundsd
             operand: [ Vo, Ho, Woq, Ib ]
             attr: [ ny ]
             prefix: 0x66
@@ -7826,8 +8668,8 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vblendps
-            operand: [ Vx, Hx, Wx, Ib ]
+          - mnemonic: blendps
+            operand: [ Vx, Wx, Ib ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
@@ -7838,8 +8680,8 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vblendpd
-            operand: [ Vx, Hx, Wx, Ib ]
+          - mnemonic: blendpd
+            operand: [ Vx, Wx, Ib ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
@@ -7850,14 +8692,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vblendw
-            operand: [ Vx, Hx, Wx, Ib ]
+          - mnemonic: blendw
+            operand: [ Vx, Wx, Ib ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vblendw
-            operand: [ Vx, Hx, Wx, Ib ]
+          - mnemonic: blendw
+            operand: [ Vx, Wx, Ib ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -7872,14 +8714,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Ssse3"
 
-          - mnemonic: vpalignr
-            operand: [ Vx, Hx, Wx, Ib ]
+          - mnemonic: palignr
+            operand: [ Vx, Wx, Ib ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpalignr
-            operand: [ Vx, Hx, Wx, Ib ]
+          - mnemonic: palignr
+            operand: [ Vx, Wx, Ib ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -7902,7 +8744,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpextrb
+          - mnemonic: pextrb
             operand: [ Wob, Vo, Ib ]
             attr: [ ny, nv ]
             prefix: 0x66
@@ -7915,7 +8757,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpextrw
+          - mnemonic: pextrw
             operand: [ Wow, Vo, Ib ]
             attr: [ ny, nv ]
             prefix: 0x66
@@ -7929,7 +8771,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpextrd
+          - mnemonic: pextrd
             operand: [ Ey, Vo, Ib ]
             constraint: f64
             attr: [ ny, nv ]
@@ -7943,20 +8785,20 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vextractps
+          - mnemonic: extractps
             operand: [ Ey, Vo, Ib ]
             attr: [ ny, nv ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
       - opcode: 0x18
-        mnemonic: vinsertf128
+        mnemonic: insertf128
         operand: [ Vy, Hy, Wo, Ib ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx"
 
       - opcode: 0x19
-        mnemonic: vextractf128
+        mnemonic: extractf128
         operand: [ Wo, Vy, Ib ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx"
@@ -7971,7 +8813,7 @@ instruction:
         invalid:
 
       - opcode: 0x1d
-        mnemonic: vcvtps2ph
+        mnemonic: cvtps2ph
         operand: [ Woqo, Vx, Ib ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_F16c"
@@ -7989,7 +8831,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpinsrb
+          - mnemonic: pinsrb
             operand: [ Vo, Ho, Edb, Ib ]
             attr: [ ny ]
             prefix: 0x66
@@ -8002,7 +8844,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vinsertps
+          - mnemonic: insertps
             operand: [ Vo, Ho, Uod, Ib ]
             attr: [ ny ]
             prefix: 0x66
@@ -8015,7 +8857,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vpinsrd
+          - mnemonic: pinsrd
             operand: [ Vo, Ho, Ey, Ib ]
             attr: [ ny ]
             prefix: 0x66
@@ -8085,13 +8927,13 @@ instruction:
         invalid:
 
       - opcode: 0x38
-        mnemonic: vinserti128
+        mnemonic: inserti128
         operand: [ Vy, Hy, Wo, Ib ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx2"
 
       - opcode: 0x39
-        mnemonic: vextracti128
+        mnemonic: extracti128
         operand: [ Wo, Vy, Ib ]
         attr: [ nv ]
         prefix: 0x66
@@ -8122,8 +8964,8 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vdpps
-            operand: [ Vx, Hx, Wx, Ib ]
+          - mnemonic: dpps
+            operand: [ Vx, Wx, Ib ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
@@ -8134,7 +8976,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vdppd
+          - mnemonic: dppd
             operand: [ Vo, Ho, Wo, Ib ]
             attr: [ ny ]
             prefix: 0x66
@@ -8147,14 +8989,14 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse41"
 
-          - mnemonic: vmpsadbw
-            operand: [ Vx, Hx, Wx, Ib ]
+          - mnemonic: mpsadbw
+            operand: [ Vx, Wx, Ib ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vmpsadbw
-            operand: [ Vx, Hx, Wx, Ib ]
+          - mnemonic: mpsadbw
+            operand: [ Vx, Wx, Ib ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
 
@@ -8168,7 +9010,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Clmul"
 
-          - mnemonic: vpclmulqdq
+          - mnemonic: pclmulqdq
             operand: [ Vo, Ho, Wo, Ib ]
             attr: [ ny ]
             prefix: 0x66
@@ -8178,7 +9020,7 @@ instruction:
         invalid:
 
       - opcode: 0x46
-        mnemonic: vperm2i128
+        mnemonic: perm2i128
         operand: [ Vy, Hy, Wy, Ib ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx2"
@@ -8193,26 +9035,26 @@ instruction:
         invalid:
 
       - opcode: 0x4a
-        mnemonic: vblendvps
+        mnemonic: blendvps
         operand: [ Vx, Hx, Wx, Lx ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx"
 
       - opcode: 0x4b
-        mnemonic: vblendvpd
+        mnemonic: blendvpd
         operand: [ Vx, Hx, Wx, Lx ]
         prefix: 0x66
         cpu_model: ">= X86_Arch_Avx"
 
       - opcode: 0x4c
         sub_opcodes:
-          - mnemonic: vpblendvp
+          - mnemonic: pblendvp
             operand: [ Vx, Hx, Wx, Lx ]
             attr: [ ny ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx"
 
-          - mnemonic: vpblendvp
+          - mnemonic: pblendvp
             operand: [ Vx, Hx, Wx, Lx ]
             prefix: 0x66
             cpu_model: ">= X86_Arch_Avx2"
@@ -8281,7 +9123,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse42"
 
-          - mnemonic: vpcmpestrm
+          - mnemonic: pcmpestrm
             operand: [ Vo, Wo, Ib ]
             attr: [ ny, nv ]
             prefix: 0x66
@@ -8294,7 +9136,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse42"
 
-          - mnemonic: vpcmpestri
+          - mnemonic: pcmpestri
             operand: [ Vo, Wo, Ib ]
             attr: [ ny, nv ]
             prefix: 0x66
@@ -8307,7 +9149,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse42"
 
-          - mnemonic: vpcmpistrm
+          - mnemonic: pcmpistrm
             operand: [ Vo, Wo, Ib ]
             attr: [ ny, nv ]
             prefix: 0x66
@@ -8320,7 +9162,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Sse42"
 
-          - mnemonic: vpcmpistri
+          - mnemonic: pcmpistri
             operand: [ Vo, Wo, Ib ]
             attr: [ ny, nv ]
             prefix: 0x66
@@ -8702,7 +9544,7 @@ instruction:
             prefix: 0x66
             cpu_model: ">= X86_Arch_Aes"
 
-          - mnemonic: vaeskeygenassist
+          - mnemonic: aeskeygenassist
             operand: [ Vo, Wo, Ib ]
             attr: [ ny, nc ]
             prefix: 0x66
@@ -11733,6 +12575,7 @@ instruction:
     - opcode: 0x04
       mnemonic: mul
       operand: [ Eb ]
+      semantic: *mul
 
     - opcode: 0x05
       mnemonic: imul
@@ -11747,6 +12590,7 @@ instruction:
     - opcode: 0x07
       mnemonic: idiv
       operand: [ Eb ]
+      semantic: *idiv
 
     group_03B:
     - opcode: 0x00
@@ -11771,10 +12615,12 @@ instruction:
     - opcode: 0x03
       mnemonic: neg
       operand: [ Ev ]
+      semantic: *neg
 
     - opcode: 0x04
       mnemonic: mul
       operand: [ Ev ]
+      semantic: *mul
 
     - opcode: 0x05
       mnemonic: imul
@@ -11789,6 +12635,7 @@ instruction:
     - opcode: 0x07
       mnemonic: idiv
       operand: [ Ev ]
+      semantic: *idiv
 
     group_04:
     - opcode: 0x00
@@ -12080,7 +12927,7 @@ instruction:
           semantic: *cmpxchg8b
 
         - mnemonic: cmpxchg16b
-          operand: [ Mo ]
+          operand: [ Uo ]
           attr: [ m64 ]
           semantic: *cmpxchg16b
 
@@ -12179,10 +13026,10 @@ instruction:
           operand: [ Ux, Ib ]
           prefix: 0x66
 
-        - mnemonic: vpsrlw
-          operand: [ Hx, Ux, Ib ]
-          attr: [ vex ]
-          prefix: 0x66
+        # - mnemonic: psrlw
+        #   operand: [ Hx, Ux, Ib ]
+        #   attr: [ vex ]
+        #   prefix: 0x66
 
     - opcode: 0x03
       invalid:
@@ -12196,10 +13043,10 @@ instruction:
           operand: [ Ux, Ib ]
           prefix: 0x66
 
-        - mnemonic: vpwraw
-          operand: [ Hx, Ux, Ib ]
-          attr: [ vex ]
-          prefix: 0x66
+        # - mnemonic: pwraw
+        #   operand: [ Hx, Ux, Ib ]
+        #   attr: [ vex ]
+        #   prefix: 0x66
 
     - opcode: 0x05
       invalid:
@@ -12213,10 +13060,10 @@ instruction:
           operand: [ Ux, Ib ]
           prefix: 0x66
 
-        - mnemonic: vpwraw
-          operand: [ Hx, Ux, Ib ]
-          attr: [ vex ]
-          prefix: 0x66
+        # - mnemonic: pwraw
+        #   operand: [ Hx, Ux, Ib ]
+        #   attr: [ vex ]
+        #   prefix: 0x66
 
     - opcode: 0x07
       invalid:
@@ -12237,10 +13084,10 @@ instruction:
           operand: [ Ux, Ib ]
           prefix: 0x66
 
-        - mnemonic: vpsrld
-          operand: [ Hx, Ux, Ib ]
-          attr: [ vex ]
-          prefix: 0x66
+        # - mnemonic: psrld
+        #   operand: [ Hx, Ux, Ib ]
+        #   attr: [ vex ]
+        #   prefix: 0x66
 
     - opcode: 0x03
       invalid:
@@ -12254,10 +13101,10 @@ instruction:
           operand: [ Ux, Ib ]
           prefix: 0x66
 
-        - mnemonic: vpdrad
-          operand: [ Hx, Ux, Ib ]
-          attr: [ vex ]
-          prefix: 0x66
+        # - mnemonic: pdrad
+        #   operand: [ Hx, Ux, Ib ]
+        #   attr: [ vex ]
+        #   prefix: 0x66
 
     - opcode: 0x05
       invalid:
@@ -12271,10 +13118,10 @@ instruction:
           operand: [ Ux, Ib ]
           prefix: 0x66
 
-        - mnemonic: vpdrad
-          operand: [ Hx, Ux, Ib ]
-          attr: [ vex ]
-          prefix: 0x66
+        # - mnemonic: pdrad
+        #   operand: [ Hx, Ux, Ib ]
+        #   attr: [ vex ]
+        #   prefix: 0x66
 
     - opcode: 0x07
       invalid:
@@ -12295,23 +13142,23 @@ instruction:
           operand: [ Ux, Ib ]
           prefix: 0x66
 
-        - mnemonic: vpsrlq
-          operand: [ Hx, Ux, Ib ]
-          attr: [ vex ]
-          prefix: 0x66
+        # - mnemonic: psrlq
+        #   operand: [ Hx, Ux, Ib ]
+        #   attr: [ vex ]
+        #   prefix: 0x66
 
     - opcode: 0x03
       sub_opcodes:
         - invalid:
 
-        - mnemonic: vpsrldq
+        - mnemonic: psrldq
           operand: [ Ux, Ib ]
           prefix: 0x66
 
-        - mnemonic: vpsrldq
-          operand: [ Hx, Ux, Ib ]
-          attr: [ vex ]
-          prefix: 0x66
+        # - mnemonic: psrldq
+        #   operand: [ Hx, Ux, Ib ]
+        #   attr: [ vex ]
+        #   prefix: 0x66
 
     - opcode: 0x04
       invalid:
@@ -12324,27 +13171,27 @@ instruction:
         - mnemonic: psllq
           operand: [ Nq, Ib ]
 
-        - mnemonic: vpsllq
+        - mnemonic: psllq
           operand: [ Ux, Ib ]
           prefix: 0x66
 
-        - mnemonic: vpsllq
-          operand: [ Hx, Ux, Ib ]
-          attr: [ vex ]
-          prefix: 0x66
+        # - mnemonic: psllq
+        #   operand: [ Hx, Ux, Ib ]
+        #   attr: [ vex ]
+        #   prefix: 0x66
 
     - opcode: 0x07
       sub_opcodes:
         - invalid:
 
-        - mnemonic: vpslldq
+        - mnemonic: pslldq
           operand: [ Ux, Ib ]
           prefix: 0x66
 
-        - mnemonic: vpslldq
-          operand: [ Hx, Ux, Ib ]
-          attr: [ vex ]
-          prefix: 0x66
+        # - mnemonic: pslldq
+        #   operand: [ Hx, Ux, Ib ]
+        #   attr: [ vex ]
+        #   prefix: 0x66
 
     group_15:
     - opcode: 0x00
@@ -12367,7 +13214,7 @@ instruction:
 
     - opcode: 0x02
       sub_opcodes:
-        - mnemonic: vldmxcsr
+        - mnemonic: ldmxcsr
           operand: [ Md ]
 
         - mnemonic: wrfsbase
@@ -12376,7 +13223,7 @@ instruction:
 
     - opcode: 0x03
       sub_opcodes:
-        - mnemonic: vstmxcsr
+        - mnemonic: stmxcsr
           operand: [ Md ]
 
         - mnemonic: wrgsbase
@@ -12825,9 +13672,9 @@ operand:
   decode_M: [ call('Decode_M') ]
   decode_Ma: [ call('Decode_Ma') ]
   decode_Md: [ call('Decode_Md') ]
-  decode_Mo: [ call('Decode_Mo') ]
-  decode_Mod: [ call('Decode_Mod') ]
-  decode_Moq: [ call('Decode_Moq') ]
+  decode_Uo: [ call('Decode_Uo') ]
+  decode_Uod: [ call('Decode_Uod') ]
+  decode_Uoq: [ call('Decode_Uoq') ]
   decode_Mp: [ call('Decode_Mp') ]
   decode_Mq: [ call('Decode_Mq') ]
   decode_Mqo: [ call('Decode_Mqo') ]
@@ -12860,7 +13707,7 @@ operand:
   decode_Ux: [ call('Decode_Ux') ]
   decode_Vo: [ call('Decode_Vo') ]
   decode_Vod: [ call('Decode_Vod') ]
-  decode_Voq: [ call('Decode_Woq') ]
+  decode_Voq: [ call('Decode_Voq') ]
   decode_Vx: [ call('Decode_Vx') ]
   decode_Vy: [ call('Decode_Vy') ]
   decode_Wd: [ call('Decode_Wd') ]
@@ -12874,12 +13721,12 @@ operand:
   decode_Wq: [ call('Decode_Wq') ]
   decode_Wx: [ call('Decode_Wx') ]
   decode_Wy: [ call('Decode_Wy') ]
-  decode_Xb: [ "addr_b(decode_DS, decode_rSI)" ]
-  decode_Xv: [ "addr_v(decode_DS, decode_rSI)" ]
-  decode_Xz: [ "addr_z(decode_DS, decode_rSI)" ]
-  decode_Yb: [ "addr_b(decode_ES, decode_rDI)" ]
-  decode_Yv: [ "addr_v(decode_ES, decode_rDI)" ]
-  decode_Yz: [ "addr_z(decode_ES, decode_rDI)" ]
+  decode_Xb: [ "addr_b(decode_DS, decode_d64_rSI)" ]
+  decode_Xv: [ "addr_v(decode_DS, decode_d64_rSI)" ]
+  decode_Xz: [ "addr_z(decode_DS, decode_d64_rSI)" ]
+  decode_Yb: [ "addr_b(decode_ES, decode_d64_rDI)" ]
+  decode_Yv: [ "addr_v(decode_ES, decode_d64_rDI)" ]
+  decode_Yz: [ "addr_z(decode_ES, decode_d64_rDI)" ]
   decode_b: [ call('Decode_b') ]
   decode_eAX: [ "reg_z('ax', 'eax')" ]
   decode_eBP: [ "reg_z('bp', 'ebp')" ]
@@ -12898,45 +13745,45 @@ operand:
   decode_m80dec: [ call('Decode_m80dec') ]
   decode_m80fp: [ call('Decode_m80fp') ]
   decode_r10: [ "reg_v('r10w', 'r10d', 'r10')" ]
-  decode_wq10: [ "reg_wq('r10w', 'r10')" ]
+  decode_d64_r10: [ "reg_d64_r('r10w', 'r10d', 'r10')" ]
   decode_r10b: [ reg('r10b') ]
   decode_r11: [ "reg_v('r11w', 'r11d', 'r11')" ]
-  decode_wq11: [ "reg_wq('r11w', 'r11')" ]
+  decode_d64_r11: [ "reg_d64_r('r11w', 'r11d', 'r11')" ]
   decode_r11b: [ reg('r11b') ]
   decode_r12: [ "reg_v('r12w', 'r12d', 'r12')" ]
-  decode_wq12: [ "reg_wq('r12w', 'r12')" ]
+  decode_d64_r12: [ "reg_d64_r('r12w', 'r12d', 'r12')" ]
   decode_r12b: [ reg('r12b') ]
   decode_r13: [ "reg_v('r13w', 'r13d', 'r13')" ]
-  decode_wq13: [ "reg_wq('r13w', 'r13')" ]
+  decode_d64_r13: [ "reg_d64_r('r13w', 'r13d', 'r13')" ]
   decode_r13b: [ reg('r13b') ]
   decode_r14: [ "reg_v('r14w', 'r14d', 'r14')" ]
-  decode_wq14: [ "reg_wq('r14w', 'r14')" ]
+  decode_d64_r14: [ "reg_d64_r('r14w', 'r14d', 'r14')" ]
   decode_r14b: [ reg('r14b') ]
   decode_r15: [ "reg_v('r15w', 'r15d', 'r15')" ]
-  decode_wq15: [ "reg_wq('r15w', 'r15')" ]
+  decode_d64_r15: [ "reg_d64_r('r15w', 'r15d', 'r15')" ]
   decode_r15b: [ reg('r15b') ]
   decode_r8: [ "reg_v('r8w', 'r8d', 'r8')" ]
-  decode_wq8: [ "reg_wq('r8w', 'r8')" ]
+  decode_d64_r8: [ "reg_d64_r('r8w', 'r8d', 'r8')" ]
   decode_r8b: [ reg('r8b') ]
   decode_r9: [ "reg_v('r9w', 'r9d', 'r9')" ]
-  decode_wq9: [ "reg_wq('r9w', 'r9')" ]
+  decode_d64_r9: [ "reg_d64_r('r9w', 'r9d', 'r9')" ]
   decode_r9b: [ reg('r9b') ]
   decode_rAX: [ "reg_v('ax', 'eax', 'rax')" ]
-  decode_wqAX: [ "reg_wq('ax', 'rax')" ]
+  decode_d64_rAX: [ "reg_d64_r('ax', 'eax', 'rax')" ]
   decode_rBP: [ "reg_v('bp', 'ebp', 'rbp')" ]
-  decode_wqBP: [ "reg_wq('bp', 'rbp')" ]
+  decode_d64_rBP: [ "reg_d64_r('bp', 'ebp', 'rbp')" ]
   decode_rBX: [ "reg_v('bx', 'ebx', 'rbx')" ]
-  decode_wqBX: [ "reg_wq('bx', 'rbx')" ]
+  decode_d64_rBX: [ "reg_d64_r('bx', 'ebx', 'rbx')" ]
   decode_rCX: [ "reg_v('cx', 'ecx', 'rcx')" ]
-  decode_wqCX: [ "reg_wq('cx', 'rcx')" ]
+  decode_d64_rCX: [ "reg_d64_r('cx', 'ecx', 'rcx')" ]
   decode_rDI: [ "reg_v('di', 'edi', 'rdi')" ]
-  decode_wqDI: [ "reg_wq('di', 'rdi')" ]
+  decode_d64_rDI: [ "reg_d64_r('di', 'edi', 'rdi')" ]
   decode_rDX: [ "reg_v('dx', 'edx', 'rdx')" ]
-  decode_wqDX: [ "reg_wq('dx', 'rdx')" ]
+  decode_d64_rDX: [ "reg_d64_r('dx', 'edx', 'rdx')" ]
   decode_rSI: [ "reg_v('si', 'esi', 'rsi')" ]
-  decode_wqSI: [ "reg_wq('si', 'rsi')" ]
+  decode_d64_rSI: [ "reg_d64_r('si', 'esi', 'rsi')" ]
   decode_rSP: [ "reg_v('sp', 'esp', 'rsp')" ]
-  decode_wqSP: [ "reg_wq('sp', 'rsp')" ]
+  decode_d64_rSP: [ "reg_d64_r('sp', 'esp', 'rsp')" ]
   decode_w: [ call('Decode_w') ]
   decode_x: [ call('Decode_x') ]
 
@@ -12970,6 +13817,7 @@ operand:
   Eb_Gb: [ op0 = decode_Eb, op1 = decode_Gb ]
   Eb_Ib: [ last_len, op0 = decode_Eb, move_decode_offset(next_operand), op1 = decode_Ib ]
   Ed: [ op0 = decode_Ed ]
+  Ed_Vo: [ op0 = decode_Ed, op1 = decode_Vo ]
   Ev: [ op0 = decode_Ev ]
   Ev_1: [ op0 = decode_Ev, op1 = decode_1 ]
   Ev_CL: [ op0 = decode_Ev, op1 = decode_CL ]
@@ -12995,8 +13843,8 @@ operand:
   Gv_Eb: [ op0 = decode_Gv, op1 = decode_Eb ]
   Gv_Ed: [ op0 = decode_Gv, op1 = decode_Ed ]
   Gv_Ev: [ op0 = decode_Gv, op1 = decode_Ev ]
-  Gv_Ev_Ibs: [ op0 = decode_Gv, op1 = decode_Ev, op2 = decode_Ibs ]
-  Gv_Ev_Iz: [ op0 = decode_Gv, op1 = decode_Ev, op2 = decode_Iz ]
+  Gv_Ev_Ibs: [ last_len, op0 = decode_Gv, op1 = decode_Ev, move_decode_offset(next_operand), op2 = decode_Ibs ]
+  Gv_Ev_Iz: [ last_len, op0 = decode_Gv, op1 = decode_Ev, move_decode_offset(next_operand), op2 = decode_Iz ]
   Gv_Ew: [ op0 = decode_Gv, op1 = decode_Ew ]
   Gv_M: [ op0 = decode_Gv, op1 = decode_M ]
   Gv_Ma: [ op0 = decode_Gv, op1 = decode_Ma ]
@@ -13007,7 +13855,7 @@ operand:
   Gy_Ev: [ op0 = decode_Gy, op1 = decode_Ev ]
   Gy_Ey: [ op0 = decode_Gy, op1 = decode_Ey ]
   Gy_Ey_By: [ op0 = decode_Gy, op1 = decode_Ey, op2 = decode_By ]
-  Gy_Mo: [ op0 = decode_Gy, op1 = decode_Mo ]
+  Gy_Uo: [ op0 = decode_Gy, op1 = decode_Uo ]
   Gy_Nq: [ op0 = decode_Gy, op1 = decode_Nq ]
   Gy_Nq_Ib: [ op0 = decode_Gy, op1 = decode_Nq, op2 = decode_Ib ]
   Gy_Uo_Ib: [ op0 = decode_Gy, op1 = decode_Uo, op2 = decode_Ib ]
@@ -13015,7 +13863,7 @@ operand:
   Gy_Wod: [ op0 = decode_Gy, op1 = decode_Wod ]
   Gy_Woq: [ op0 = decode_Gy, op1 = decode_Woq ]
   Hx_Hx_Wx: [ op0 = decode_Hx, op1 = decode_Hx, op2 = decode_Wx ]
-  Hx_Ux_Ib: [ op0 = decode_Hx, op1 = decode_Ux, op2 = decode_Ib ]
+  Hx_Ux_Ib: [ last_len, op0 = decode_Hx, op1 = decode_Ux, move_decode_offset(next_operand), op2 = decode_Ib ]
   Ib: [ op0 = decode_Ib ]
   Ib_AL: [ op0 = decode_Ib, op1 = decode_AL ]
   Ib_eAX: [ op0 = decode_Ib, op1 = decode_eAX ]
@@ -13027,10 +13875,10 @@ operand:
   M: [ op0 = decode_M ]
   Md: [ op0 = decode_Md ]
   Md_Vo: [ op0 = decode_Md, op1 = decode_Vo ]
-  Mo: [ op0 = decode_Mo ]
-  Mo_Vod: [ op0 = decode_Mo, op1 = decode_Vod ]
-  Mo_Voq: [ op0 = decode_Mo, op1 = decode_Voq ]
-  Moq_Vo: [ op0 = decode_Moq, op1 = decode_Vo ]
+  Uo: [ op0 = decode_Uo ]
+  Uo_Vod: [ op0 = decode_Uo, op1 = decode_Vod ]
+  Uo_Voq: [ op0 = decode_Uo, op1 = decode_Voq ]
+  Uoq_Vo: [ op0 = decode_Uoq, op1 = decode_Vo ]
   Mp: [ op0 = decode_Mp ]
   Mq: [ op0 = decode_Mq ]
   Mq_Pq: [ op0 = decode_Mq, op1 = decode_Pq ]
@@ -13085,14 +13933,16 @@ operand:
   Sw_Ew: [ op0 = decode_Sw, op1 = decode_Ew ]
   Ty_Ry: [ op0 = decode_Ty, op1 = decode_Ry ]
   Uo_Ib_Ib: [ op0 = decode_Uo, op1 = decode_Ib, op2 = decode_Ib ]
-  Ux_Ib: [ op0 = decode_Ux, op1 = decode_Ib ]
+  Ux_Ib: [ last_len, op0 = decode_Ux, move_decode_offset(next_operand), op1 = decode_Ib ]
   Vo_Edb_Ib: [ op0 = decode_Vo, op1 = decode_Edb, op2 = decode_Ib ]
+  Vo_Ed: [ op0 = decode_Vo, op1 = decode_Ed ]
   Vo_Ey: [ op0 = decode_Vo, op1 = decode_Ey ]
   Vo_Ey_Ib: [ op0 = decode_Vo, op1 = decode_Ey, op2 = decode_Ib ]
   Vo_Ho_Edb_Ib: [ op0 = decode_Vo, op1 = decode_Ho, op2 = decode_Edb, op3 = decode_Ib ]
   Vo_Ho_Ey: [ op0 = decode_Vo, op1 = decode_Ho, op2 = decode_Ey ]
   Vo_Ho_Ey_Ib: [ op0 = decode_Vo, op1 = decode_Ho, op2 = decode_Ey, op3 = decode_Ib ]
-  Vo_Ho_Moq: [ op0 = decode_Vo, op1 = decode_Ho, op2 = decode_Moq ]
+  Vo_Ho_Uoq: [ op0 = decode_Vo, op1 = decode_Ho, op2 = decode_Uoq ]
+  Vo_Mw_Ib: [ op0 = decode_Vo, op1 = decode_Mw, op2 = decode_Ib ]
   Vo_Ho_Mw_Ib: [ op0 = decode_Vo, op1 = decode_Ho, op2 = decode_Mw, op3 = decode_Ib ]
   Vo_Ho_Uod_Ib: [ op0 = decode_Vo, op1 = decode_Ho, op2 = decode_Uod, op3 = decode_Ib ]
   Vo_Ho_Wd: [ op0 = decode_Vo, op1 = decode_Ho, op2 = decode_Wd ]
@@ -13103,8 +13953,8 @@ operand:
   Vo_Ho_Woq_Ib: [ op0 = decode_Vo, op1 = decode_Ho, op2 = decode_Woq, op3 = decode_Ib ]
   Vo_Ho_Wq: [ op0 = decode_Vo, op1 = decode_Ho, op2 = decode_Wq ]
   Vo_Md_x_Ho: [ op0 = decode_Vo, op1 = decode_Md, op2 = decode_x, op3 = decode_Ho ]
-  Vo_Mod: [ op0 = decode_Vo, op1 = decode_Mod ]
-  Vo_Moq: [ op0 = decode_Vo, op1 = decode_Moq ]
+  Vo_Uod: [ op0 = decode_Vo, op1 = decode_Uod ]
+  Vo_Uoq: [ op0 = decode_Vo, op1 = decode_Uoq ]
   Vo_Mq: [ op0 = decode_Vo, op1 = decode_Mq ]
   Vo_Nq: [ op0 = decode_Vo, op1 = decode_Nq ]
   Vo_Uo: [ op0 = decode_Vo, op1 = decode_Uo ]
@@ -13118,40 +13968,42 @@ operand:
   Vo_Wx: [ op0 = decode_Vo, op1 = decode_Wx ]
   Vx_Hx_Mx: [ op0 = decode_Vx, op1 = decode_Hx, op2 = decode_Mx ]
   Vx_Hx_Wx: [ op0 = decode_Vx, op1 = decode_Hx, op2 = decode_Wx ]
-  Vx_Hx_Wx_Ib: [ op0 = decode_Vx, op1 = decode_Hx, op2 = decode_Wx, op3 = decode_Ib ]
+  Vx_Hx_Wx_Ib: [ last_len, op0 = decode_Vx, op1 = decode_Hx, op2 = decode_Wx, move_decode_offset(next_operand), op3 = decode_Ib ]
   Vx_Hx_Wx_Lx: [ op0 = decode_Vx, op1 = decode_Hx, op2 = decode_Wx, op3 = decode_Lx ]
   Vx_Md_x_Hx: [ op0 = decode_Vx, op1 = decode_Md, op2 = decode_x, op3 = decode_Hx ]
-  Vx_Mo_b: [ op0 = decode_Vx, op1 = decode_Mo, op2 = decode_b ]
-  Vx_Mo_w: [ op0 = decode_Vx, op1 = decode_Mo, op2 = decode_w ]
-  Vx_Mod: [ op0 = decode_Vx, op1 = decode_Mod ]
-  Vx_Moq: [ op0 = decode_Vx, op1 = decode_Moq ]
+  Vx_Uo_b: [ op0 = decode_Vx, op1 = decode_Uo, op2 = decode_b ]
+  Vx_Uo_w: [ op0 = decode_Vx, op1 = decode_Uo, op2 = decode_w ]
+  Vx_Uod: [ op0 = decode_Vx, op1 = decode_Uod ]
+  Vx_Uoq: [ op0 = decode_Vx, op1 = decode_Uoq ]
+  Vx_Woq: [ op0 = decode_Vx, op1 = decode_Woq ]
   Vx_Mq_x_Hx: [ op0 = decode_Vx, op1 = decode_Mq, op2 = decode_x, op3 = decode_Hx ]
   Vx_Mqo_Hx: [ op0 = decode_Vx, op1 = decode_Mqo, op2 = decode_Hx ]
   Vx_Mx: [ op0 = decode_Vx, op1 = decode_Mx ]
   Vx_Uo: [ op0 = decode_Vx, op1 = decode_Uo ]
   Vx_Wx: [ op0 = decode_Vx, op1 = decode_Wx ]
-  Vx_Wx_Ib: [ op0 = decode_Vx, op1 = decode_Wx, op2 = decode_Ib ]
-  Vy_Hy_Wo_Ib: [ op0 = decode_Vy, op1 = decode_Hy, op2 = decode_Wo, op3 = decode_Ib ]
+  Vx_Wx_Ib: [ last_len, op0 = decode_Vx, op1 = decode_Wx, move_decode_offset(next_operand), op2 = decode_Ib ]
+  Vy_Hy_Wo_Ib: [ last_len, op0 = decode_Vy, op1 = decode_Hy, op2 = decode_Wo, move_decode_offset(next_operand), op3 = decode_Ib ]
   Vy_Hy_Wy: [ op0 = decode_Vy, op1 = decode_Hy, op2 = decode_Wy ]
-  Vy_Hy_Wy_Ib: [ op0 = decode_Vy, op1 = decode_Hy, op2 = decode_Wy, op3 = decode_Ib ]
-  Vy_Mo: [ op0 = decode_Vy, op1 = decode_Mo ]
-  Vy_Moq: [ op0 = decode_Vy, op1 = decode_Moq ]
+  Vy_Hy_Wy_Ib: [ last_len, op0 = decode_Vy, op1 = decode_Hy, op2 = decode_Wy, move_decode_offset(next_operand), op3 = decode_Ib ]
+  Vy_Uo: [ op0 = decode_Vy, op1 = decode_Uo ]
+  Vy_Uoq: [ op0 = decode_Vy, op1 = decode_Uoq ]
   Vy_Uo: [ op0 = decode_Vy, op1 = decode_Uo ]
   Vy_Wod: [ op0 = decode_Vy, op1 = decode_Wod ]
   Vy_Woo: [ op0 = decode_Vy, op1 = decode_Woo ]
   Vy_Woq: [ op0 = decode_Vy, op1 = decode_Woq ]
-  Vy_Wy_Ib: [ op0 = decode_Vy, op1 = decode_Wy, op2 = decode_Ib ]
-  Wo_Vy_Ib: [ op0 = decode_Wo, op1 = decode_Vy, op2 = decode_Ib ]
-  Wob_Vo_Ib: [ op0 = decode_Wob, op1 = decode_Vo, op2 = decode_Ib ]
+  Vy_Wy_Ib: [ last_len, op0 = decode_Vy, op1 = decode_Wy, move_decode_offset(next_operand), op2 = decode_Ib ]
+  Wo_Vy_Ib: [ last_len, op0 = decode_Wo, op1 = decode_Vy, move_decode_offset(next_operand), op2 = decode_Ib ]
+  Wob_Vo_Ib: [ last_len, op0 = decode_Wob, op1 = decode_Vo, move_decode_offset(next_operand), op2 = decode_Ib ]
+  Wod_Vo: [ op0 = decode_Wod, op1 = decode_Vo ]
   Woq_Vo: [ op0 = decode_Woq, op1 = decode_Vo ]
-  Woqo_Vx_Ib: [ op0 = decode_Woqo, op1 = decode_Vx, op2 = decode_Ib ]
-  Wow_Vo_Ib: [ op0 = decode_Wow, op1 = decode_Vo, op2 = decode_Ib ]
+  Woqo_Vx_Ib: [ last_len, op0 = decode_Woqo, op1 = decode_Vx, move_decode_offset(next_operand), op2 = decode_Ib ]
+  Wow_Vo_Ib: [ last_len, op0 = decode_Wow, op1 = decode_Vo, move_decode_offset(next_operand), op2 = decode_Ib ]
   Wx_Vx: [ op0 = decode_Wx, op1 = decode_Vx ]
-  Yb_AL: [ op0 = decode_Yb, op1 = decode_AL ]
+  AL_Yb: [ op0 = decode_AL, op1 = decode_Yb ] # Inversion needed here!
   Yb_DX: [ op0 = decode_Yb, op1 = decode_DX ]
-  Yb_Xb: [ op0 = decode_Yb, op1 = decode_Xb ]
-  Yv_Xv: [ op0 = decode_Yv, op1 = decode_Xv ]
-  Yv_rAX: [ op0 = decode_Yv, op1 = decode_rAX ]
+  Xb_Yb: [ op0 = decode_Xb, op1 = decode_Yb ] # Inversion needed here!
+  Xv_Yv: [ op0 = decode_Xv, op1 = decode_Yv ] # Inversion needed here!
+  rAX_Yv: [ op0 = decode_rAX, op1 = decode_Yv ] # Inversion needed here!
   Yz_DX: [ op0 = decode_Yz, op1 = decode_DX ]
   eAX: [ op0 = decode_eAX ]
   eAX_DX: [ op0 = decode_eAX, op1 = decode_DX ]
@@ -13172,76 +14024,76 @@ operand:
   m80dec: [ op0 = decode_m80dec ]
   m80fp: [ op0 = decode_m80fp ]
   r10: [ op0 = decode_r10 ]
-  wq10: [ op0 = decode_wq10 ]
+  d64_r10: [ op0 = decode_d64_r10 ]
   r10_Iv: [ op0 = decode_r10, op1 = decode_Iv ]
   r10_rAX: [ op0 = decode_r10, op1 = decode_rAX ]
   r10b_Ib: [ op0 = decode_r10b, op1 = decode_Ib ]
   r11: [ op0 = decode_r11 ]
-  wq11: [ op0 = decode_wq11 ]
+  d64_r11: [ op0 = decode_d64_r11 ]
   r11_Iv: [ op0 = decode_r11, op1 = decode_Iv ]
   r11_rAX: [ op0 = decode_r11, op1 = decode_rAX ]
   r11b_Ib: [ op0 = decode_r11b, op1 = decode_Ib ]
   r12: [ op0 = decode_r12 ]
-  wq12: [ op0 = decode_wq12 ]
+  d64_r12: [ op0 = decode_d64_r12 ]
   r12_Iv: [ op0 = decode_r12, op1 = decode_Iv ]
   r12_rAX: [ op0 = decode_r12, op1 = decode_rAX ]
   r12b_Ib: [ op0 = decode_r12b, op1 = decode_Ib ]
   r13: [ op0 = decode_r13 ]
-  wq13: [ op0 = decode_wq13 ]
+  d64_r13: [ op0 = decode_d64_r13 ]
   r13_Iv: [ op0 = decode_r13, op1 = decode_Iv ]
   r13_rAX: [ op0 = decode_r13, op1 = decode_rAX ]
   r13b_Ib: [ op0 = decode_r13b, op1 = decode_Ib ]
   r14: [ op0 = decode_r14 ]
-  wq14: [ op0 = decode_wq14 ]
+  d64_r14: [ op0 = decode_d64_r14 ]
   r14_Iv: [ op0 = decode_r14, op1 = decode_Iv ]
   r14_rAX: [ op0 = decode_r14, op1 = decode_rAX ]
   r14b_Ib: [ op0 = decode_r14b, op1 = decode_Ib ]
   r15: [ op0 = decode_r15 ]
-  wq15: [ op0 = decode_wq15 ]
+  d64_r15: [ op0 = decode_d64_r15 ]
   r15_Iv: [ op0 = decode_r15, op1 = decode_Iv ]
   r15_rAX: [ op0 = decode_r15, op1 = decode_rAX ]
   r15b_Ib: [ op0 = decode_r15b, op1 = decode_Ib ]
   r8: [ op0 = decode_r8 ]
-  wq8: [ op0 = decode_wq8 ]
+  d64_r8: [ op0 = decode_d64_r8 ]
   r8_Iv: [ op0 = decode_r8, op1 = decode_Iv ]
   r8_rAX: [ op0 = decode_r8, op1 = decode_rAX ]
   r8b_Ib: [ op0 = decode_r8b, op1 = decode_Ib ]
   r9: [ op0 = decode_r9 ]
-  wq9: [ op0 = decode_wq9 ]
+  d64_r9: [ op0 = decode_d64_r9 ]
   r9_Iv: [ op0 = decode_r9, op1 = decode_Iv ]
   r9_rAX: [ op0 = decode_r9, op1 = decode_rAX ]
   r9b_Ib: [ op0 = decode_r9b, op1 = decode_Ib ]
   rAX: [ op0 = decode_rAX ]
-  wqAX: [ op0 = decode_wqAX ]
+  d64_rAX: [ op0 = decode_d64_rAX ]
   rAX_Iv: [ op0 = decode_rAX, op1 = decode_Iv ]
   rAX_Iz: [ op0 = decode_rAX, op1 = decode_Iz ]
   rAX_Ov: [ op0 = decode_rAX, op1 = decode_Ov ]
   rAX_Xv: [ op0 = decode_rAX, op1 = decode_Xv ]
   rBP: [ op0 = decode_rBP ]
-  wqBP: [ op0 = decode_wqBP ]
+  d64_rBP: [ op0 = decode_d64_rBP ]
   rBP_Iv: [ op0 = decode_rBP, op1 = decode_Iv ]
   rBP_rAX: [ op0 = decode_rBP, op1 = decode_rAX ]
   rBX: [ op0 = decode_rBX ]
-  wqBX: [ op0 = decode_wqBX ]
+  d64_rBX: [ op0 = decode_d64_rBX ]
   rBX_Iv: [ op0 = decode_rBX, op1 = decode_Iv ]
   rBX_rAX: [ op0 = decode_rBX, op1 = decode_rAX ]
   rCX: [ op0 = decode_rCX ]
-  wqCX: [ op0 = decode_wqCX ]
+  d64_rCX: [ op0 = decode_d64_rCX ]
   rCX_Iv: [ op0 = decode_rCX, op1 = decode_Iv ]
   rCX_rAX: [ op0 = decode_rCX, op1 = decode_rAX ]
   rDI: [ op0 = decode_rDI ]
-  wqDI: [ op0 = decode_wqDI ]
+  d64_rDI: [ op0 = decode_d64_rDI ]
   rDI_Iv: [ op0 = decode_rDI, op1 = decode_Iv ]
   rDI_rAX: [ op0 = decode_rDI, op1 = decode_rAX ]
   rDX: [ op0 = decode_rDX ]
-  wqDX: [ op0 = decode_wqDX ]
+  d64_rDX: [ op0 = decode_d64_rDX ]
   rDX_Iv: [ op0 = decode_rDX, op1 = decode_Iv ]
   rDX_rAX: [ op0 = decode_rDX, op1 = decode_rAX ]
   rSI: [ op0 = decode_rSI ]
-  wqSI: [ op0 = decode_wqSI ]
+  d64_rSI: [ op0 = decode_d64_rSI ]
   rSI_Iv: [ op0 = decode_rSI, op1 = decode_Iv ]
   rSI_rAX: [ op0 = decode_rSI, op1 = decode_rAX ]
   rSP: [ op0 = decode_rSP ]
-  wqSP: [ op0 = decode_wqSP ]
+  d64_rSP: [ op0 = decode_d64_rSP ]
   rSP_Iv: [ op0 = decode_rSP, op1 = decode_Iv ]
   rSP_rAX: [ op0 = decode_rSP, op1 = decode_rAX ]

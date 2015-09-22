@@ -18,7 +18,7 @@ Instruction::Instruction(char const* pName, u32 Opcode, u16 Length)
 }
 
 Instruction::Instruction(CellData::SPType spDna)
-  : Cell(spDna) 
+  : Cell(spDna)
   , m_pName(nullptr)
   , m_Opcd(0x0)
   , m_Prefix()
@@ -113,22 +113,22 @@ bool Instruction::GetOperandReference(Document const& rDoc, u8 OprdNo, Address c
   auto spMemExpr = expr_cast<MemoryExpression>(spResExpr);
   if (spMemExpr != nullptr)
   {
-    auto spBaseExpr = expr_cast<ConstantExpression>(spMemExpr->GetBaseExpression());
+    auto spBaseExpr = expr_cast<BitVectorExpression>(spMemExpr->GetBaseExpression());
     if (spBaseExpr != nullptr)
-      rDstAddr.SetBase(static_cast<TBase>(spBaseExpr->GetConstant()));
+      rDstAddr.SetBase(spBaseExpr->GetInt().ConvertTo<TBase>());
 
-    auto spOffExpr = expr_cast<ConstantExpression>(spMemExpr->GetOffsetExpression());
+    auto spOffExpr = expr_cast<BitVectorExpression>(spMemExpr->GetOffsetExpression());
     if (spOffExpr == nullptr)
       return false;
-    rDstAddr.SetOffset(spOffExpr->GetConstant());
+    rDstAddr.SetOffset(spOffExpr->GetInt().ConvertTo<TOffset>());
     return true;
   }
 
   // HACK: We ignore 8-bit const since it's probably not a reference
-  auto spConstExpr = expr_cast<ConstantExpression>(spResExpr);
-  if (spConstExpr != nullptr && spConstExpr->GetSizeInBit() > 8)
+  auto spConstExpr = expr_cast<BitVectorExpression>(spResExpr);
+  if (spConstExpr != nullptr && spConstExpr->GetBitSize() > 8)
   {
-    rDstAddr.SetOffset(spConstExpr->GetConstant());
+    rDstAddr.SetOffset(spConstExpr->GetInt().ConvertTo<TOffset>());
     return true;
   }
 

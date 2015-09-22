@@ -32,10 +32,11 @@ class ArmArchitecture : public Architecture
   class ARMCpuInformation : public CpuInformation
   {
   public:
+    ARMCpuInformation(void) : CpuInformation(MEDUSA_ARCH_TAG('a', 'r', 'm')) {}
     virtual char const* ConvertIdentifierToName(u32 Id) const;
     virtual u32 ConvertNameToIdentifier(std::string const& rName) const;
     virtual u32 GetRegisterByType(CpuInformation::Type RegType, u8 Mode) const;
-    virtual u32 GetSizeOfRegisterInBit(u32 Id) const { return 32; }
+    virtual u32 GetSizeOfRegisterInBit(u32 Id) const;
     virtual bool IsRegisterAliased(u32 Id0, u32 Id1) const { return false; }
   } m_CpuInfo;
 
@@ -44,10 +45,12 @@ class ArmArchitecture : public Architecture
   public:
     ARMCpuContext(CpuInformation const& rCpuInfo) : CpuContext(rCpuInfo) { memset(&m_Context, 0x0, sizeof(m_Context)); }
     virtual bool ReadRegister (u32 Reg, void*       pVal, u32 BitSize) const;
-    virtual bool WriteRegister(u32 Reg, void const* pVal, u32 BitSize, bool SignExtend = false);
+    virtual bool WriteRegister(u32 Reg, void const* pVal, u32 BitSize);
     virtual bool Translate(Address const& rLogicalAddress, u64& rLinearAddress) const;
     virtual u8 GetMode(void) const;
     virtual void SetMode(u8 Mode);
+    virtual bool GetAddress(AddressKind AddrKind, Address& rAddr) const;
+    virtual bool SetAddress(AddressKind AddrKind, Address const& rAddr);
     virtual std::string ToString(void) const;
 
     virtual void* GetRegisterAddress(u32 Register);
@@ -57,15 +60,6 @@ class ArmArchitecture : public Architecture
     virtual void  GetRegisters(RegisterList& RegList) const;
 
   private:
-    enum CSPR_Flags
-    {
-      ARM_CSPR_T = 1 << 5,  //! State bit (Thumb)
-      ARM_CSPR_O = 1 << 28, //! Overflow
-      ARM_CSPR_C = 1 << 29, //! Carry or borrow or extend
-      ARM_CSPR_Z = 1 << 30, //! Zero
-      ARM_CSPR_N = 1 << 31, //! Negative or less than
-    };
-
     struct
     {
       u32 Registers[16];
@@ -107,7 +101,10 @@ public:
     PrintData          & rPrintData) const;
   virtual CpuInformation const* GetCpuInformation(void) const                          { static ARMCpuInformation ArmCpuInfo; return &ArmCpuInfo; }
   virtual CpuContext*           MakeCpuContext(void) const                             { return new ARMCpuContext(*GetCpuInformation()); }
-  virtual MemoryContext*        MakeMemoryContext(void) const                          { return new MemoryContext(*GetCpuInformation());; }
+  virtual MemoryContext*        MakeMemoryContext(void) const                          { return new MemoryContext(*GetCpuInformation()); }
+
+  virtual bool                  HandleExpression(Expression::LSPType & rExprs, std::string const& rName, Instruction& rInsn, Expression::SPType spResExpr);
+  virtual bool                  EmitSetExecutionAddress(Expression::VSPType& rExprs, Address const& rAddr, u8 Mode);
 
 #include "arm_opcode.ipp"
 };

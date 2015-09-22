@@ -35,9 +35,10 @@ bool UnixOperatingSystem::InitializeContext(
   auto const& rCpuInfo = rCpuCtxt.GetCpuInformation();
   u64 const StkPtr = 0xbedb4000;
   u64 const StkLen = 0x21000;
+  u32 const ReadWrite = MemoryArea::Read | MemoryArea::Write;
 
   void* pStkMem;
-  if (!rMemCtxt.AllocateMemory(StkPtr, StkLen, &pStkMem))
+  if (!rMemCtxt.AllocateMemory(StkPtr, StkLen, ReadWrite, &pStkMem))
     return false;
 
   u32 StkReg = rCpuInfo.GetRegisterByType(CpuInformation::StackPointerRegister, rCpuCtxt.GetMode());
@@ -128,8 +129,8 @@ bool UnixOperatingSystem::AnalyzeFunction(Document& rDoc, Address const& rAddres
     return true;
 
   // TODO: execute this part
-  auto spBase = expr_cast<ConstantExpression>(spAdrIpImm->GetOperand(1));
-  auto spDisp = expr_cast<ConstantExpression>(spAddIpIpImm->GetOperand(2));
+  auto spBase = expr_cast<BitVectorExpression>(spAdrIpImm->GetOperand(1));
+  auto spDisp = expr_cast<BitVectorExpression>(spAddIpIpImm->GetOperand(2));
   auto spMem  = expr_cast<MemoryExpression>(spLdrPcIpImm->GetOperand(1));
 
   if (spBase == nullptr || spDisp == nullptr || spMem == nullptr)
@@ -138,12 +139,12 @@ bool UnixOperatingSystem::AnalyzeFunction(Document& rDoc, Address const& rAddres
   auto spBinOp = expr_cast<BinaryOperationExpression>(spMem->GetOffsetExpression());
   if (spBinOp == nullptr)
     return true;
-  auto spOff = expr_cast<ConstantExpression>(spBinOp->GetRightExpression());
+  auto spOff = expr_cast<BitVectorExpression>(spBinOp->GetRightExpression());
 
   Address DstAddr(
     Address::FlatType,
     0x0,
-    static_cast<u32>(spBase->GetConstant() + spDisp->GetConstant() + spOff->GetConstant()),
+    static_cast<u32>(spBase->GetInt().ConvertTo<u32>() + spDisp->GetInt().ConvertTo<u32>() + spOff->GetInt().ConvertTo<u32>()),
     0, 32);
 
   EvaluateVisitor EvalVst(rDoc, spArch->CurrentAddress(rAddress, *spAdrIpImm), spAdrIpImm->GetMode(), true);

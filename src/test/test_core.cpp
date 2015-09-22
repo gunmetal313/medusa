@@ -22,6 +22,24 @@ public:
 
 BOOST_AUTO_TEST_SUITE(core_test_suite)
 
+BOOST_AUTO_TEST_CASE(core_ap_int_test_case)
+{
+  using namespace medusa;
+
+  BitVector Int0(16, -1);
+  BOOST_CHECK(Int0.GetUnsignedValue() == 0xffff);
+
+  BitVector Int1(16, 0xffff);
+  BOOST_CHECK(Int1.GetSignedValue() == -1);
+
+  ++Int1;
+  BOOST_CHECK(Int1.GetSignedValue() == 0);
+
+  --Int1;
+  BOOST_CHECK(Int1.GetUnsignedValue() == 0xffff);
+  BOOST_CHECK(Int1.GetSignedValue() == -1);
+}
+
 BOOST_AUTO_TEST_CASE(core_structure_test_case)
 {
   BOOST_MESSAGE("Testing structure");
@@ -45,7 +63,7 @@ BOOST_AUTO_TEST_CASE(core_structure_test_case)
     ;
 
   StructureDetail _IMAGE_DATA_DIRECTORY ("_IMAGE_DATA_DIRECTORY");
-  _IMAGE_DATA_DIRECTORY 
+  _IMAGE_DATA_DIRECTORY
     .AddField(DWORD, "VirtualAddress")
     .AddField(DWORD, "Size")
     ;
@@ -189,7 +207,7 @@ BOOST_AUTO_TEST_CASE(core_anlz_call_reg_test_case)
   {
     auto spFileBinStrm = std::make_shared<FileBinaryStream>(pSample);
     BOOST_REQUIRE(Core.NewDocument(
-      spFileBinStrm,
+      spFileBinStrm, true,
       [&](Path& rDbPath, std::list<Medusa::Filter> const&)
     {
       rDbPath = "call_reg.pe.x86-32_";
@@ -220,7 +238,7 @@ BOOST_AUTO_TEST_CASE(core_anlz_jmp_tbl_test_case)
   {
     auto spFileBinStrm = std::make_shared<FileBinaryStream>(pSample);
     BOOST_REQUIRE(Core.NewDocument(
-      spFileBinStrm,
+      spFileBinStrm, true,
       [&](Path& rDbPath, std::list<Medusa::Filter> const&)
     {
       rDbPath = "jmp_tbl.pe.x86-32_";

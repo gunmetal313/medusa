@@ -5,11 +5,10 @@
 
 MEDUSA_NAMESPACE_BEGIN
 
-Execution::Execution(Document& rDoc, Architecture::SPType spArch, OperatingSystem::SPType spOs)
+Execution::Execution(Document& rDoc)
 : m_rDoc(rDoc)
-, m_spArch(spArch), m_spOs(spOs)
+, m_spArch(nullptr), m_spOs(nullptr)
 , m_pCpuCtxt(nullptr), m_pMemCtxt(nullptr)
-, m_pCpuInfo(spArch->GetCpuInformation())
 {
 }
 
@@ -19,22 +18,43 @@ Execution::~Execution(void)
   delete m_pMemCtxt;
 }
 
-bool Execution::Initialize(u8 Mode, std::vector<std::string> const& rArgs, std::vector<std::string> const& rEnv, std::string const& rCurWrkDir)
+bool Execution::Initialize(std::vector<std::string> const& rArgs, std::vector<std::string> const& rEnv, std::string const& rCurWrkDir)
 {
   delete m_pCpuCtxt;
   delete m_pMemCtxt;
 
+  auto StartAddr = m_rDoc.GetStartAddress();
+  auto const& rModMgr = ModuleManager::Instance();
+  m_spArch = rModMgr.GetArchitecture(m_rDoc.GetArchitectureTag(StartAddr));
+  if (m_spArch == nullptr)
+  {
+    Log::Write("core").Level(LogError) << "unable to get architecture module for execution" << LogEnd;
+    return false;
+  }
+
   m_pCpuCtxt = m_spArch->MakeCpuContext();
   m_pMemCtxt = m_spArch->MakeMemoryContext();
-
   if (m_pCpuCtxt == nullptr || m_pMemCtxt == nullptr)
+  {
+    Log::Write("core").Level(LogError) << "failed to make context for execution" << LogEnd;
     return false;
+  }
+  m_pCpuCtxt->SetMode(m_rDoc.GetMode(StartAddr));
+
+  m_pCpuInfo = &m_pCpuCtxt->GetCpuInformation();
+  if (m_pCpuInfo == nullptr)
+  {
+    Log::Write("core").Level(LogError) << "unable to get cpu information for execution" << LogEnd;
+    return false;
+  }
 
   if (!m_pMemCtxt->MapDocument(m_rDoc, m_pCpuCtxt))
+  {
+    Log::Write("core").Level(LogError) << "unable to map document for execution" << LogEnd;
     return false;
+  }
 
-  m_pCpuCtxt->SetMode(Mode);
-
+  m_spOs = rModMgr.GetOperatingSystem(m_rDoc.GetOperatingSystemName());
   if (m_spOs == nullptr)
     return true;
 
@@ -43,6 +63,10 @@ bool Execution::Initialize(u8 Mode, std::vector<std::string> const& rArgs, std::
 
 bool Execution::SetEmulator(std::string const& rEmulatorName)
 {
+  if (m_spArch == nullptr)
+    return false;
+  if (m_pCpuCtxt == nullptr || m_pMemCtxt == nullptr)
+    return false;
   auto pGetEmulator = ModuleManager::Instance().GetEmulator(rEmulatorName);
   if (pGetEmulator == nullptr)
     return false;
@@ -56,105 +80,28 @@ bool Execution::SetEmulator(std::string const& rEmulatorName)
 void Execution::Execute(Address const& rAddr)
 {
   if (m_spEmul == nullptr)
+  {
+    Log::Write("core").Level(LogError) << "emulator is null for execution" << LogEnd;
     return;
+  }
+
+  if (!m_pCpuCtxt->SetAddress(CpuContext::AddressExecution, rAddr))
+  {
+    Log::Write("core").Level(LogError) << "failed to set address " << rAddr << LogEnd;
+    return;
+  }
 
   Address CurAddr = rAddr;
-
-  u32 ProgPtrReg = m_pCpuInfo->GetRegisterByType(CpuInformation::ProgramPointerRegister, m_pCpuCtxt->GetMode());
-  if (ProgPtrReg == CpuInformation::InvalidRegister)
-    return;
-  u32 ProgPtrRegSize = m_pCpuInfo->GetSizeOfRegisterInBit(ProgPtrReg);
-  if (ProgPtrRegSize < 8)
-    return;
-
-  u64 CurInsn = rAddr.GetOffset();
-  if (m_pCpuCtxt->WriteRegister(ProgPtrReg, &CurInsn, ProgPtrRegSize) == false)
-    return;
-
-  Address BlkAddr = CurAddr;
-  while (true)
-  {
-    Expression::LSPType Sems;
-    while (true)
-    {
-      auto spCurInsn = std::dynamic_pointer_cast<Instruction>(m_rDoc.GetCell(CurAddr));
-      if (spCurInsn == nullptr)
-      {
-        Log::Write("exec").Level(LogInfo) << "not an instruction, try to disassemble it: " << CurAddr << LogEnd;
-        TOffset CurOff;
-        if (!m_rDoc.ConvertAddressToFileOffset(CurAddr, CurOff))
-        {
-          Log::Write("exec") << "instruction at " << CurAddr.ToString() << " is not contained in file" << LogEnd;
-          Log::Write("exec") << "execution finished\n" << m_pCpuCtxt->ToString() << "\n" << m_pMemCtxt->ToString() << LogEnd;
-          return;
-        }
-        auto spInsn = std::make_shared<Instruction>();
-        if (!m_spArch->Disassemble(m_rDoc.GetBinaryStream(), CurOff, *spInsn, m_pCpuCtxt->GetMode()))
-        {
-          Log::Write("exec") << "unable to disassemble instruction at " << CurAddr.ToString() << LogEnd;
-          Log::Write("exec") << "execution finished\n" << m_pCpuCtxt->ToString() << "\n" << m_pMemCtxt->ToString() << LogEnd;
-          return;
-        }
-
-        if (!m_rDoc.SetCell(CurAddr, spInsn, true))
-        {
-          Log::Write("exec") << "unable to set a instruction at " << CurAddr.ToString() << LogEnd;
-          Log::Write("exec") << "execution finished\n" << m_pCpuCtxt->ToString() << "\n" << m_pMemCtxt->ToString() << LogEnd;
-          return;
-        }
-      }
-
-      spCurInsn = std::dynamic_pointer_cast<Instruction>(m_rDoc.GetCell(CurAddr));
-      if (spCurInsn == nullptr)
-      {
-
-        Log::Write("exec") << "unable to get instruction at " << CurAddr << LogEnd;
-        Log::Write("exec") << "execution finished\n" << m_pCpuCtxt->ToString() << "\n" << m_pMemCtxt->ToString() << LogEnd;
-        return;
-      }
-
-      Address PcAddr = m_spArch->CurrentAddress(CurAddr, *spCurInsn);
-
-      Sems.push_back(Expr::MakeSys("dump_insn", CurAddr));
-
-      // TODO: I'm not really satisfied with this method
-      // it's not enough generic
-      Sems.push_back(Expr::MakeAssign(
-        Expr::MakeId(ProgPtrReg, m_pCpuInfo),
-        Expr::MakeConst(PcAddr.GetOffsetSize(), PcAddr.GetOffset())));
-
-      CurAddr.SetOffset(CurAddr.GetOffset() + spCurInsn->GetLength());
-
-      auto const& rCurSem = spCurInsn->GetSemantic();
-      if (rCurSem.empty())
-      {
-        Log::Write("exec").Level(LogWarning) << "no semantic available: " << spCurInsn->ToString() << LogEnd;
-      }
-      std::for_each(std::begin(rCurSem), std::end(rCurSem), [&](Expression::SPType spExpr)
-      {
-        Sems.push_back(spExpr->Clone());
-      });
-
-      Sems.push_back(Expr::MakeSys("check_exec_hook", Address()));
-
-      if (spCurInsn->GetSubType() != Instruction::NoneType)
-        break;
-    };
-
-    bool Res = m_spEmul->Execute(BlkAddr, Sems);
-
-    if (Res == false)
-    {
-      Log::Write("exec") << "failed to execute block " << BlkAddr << LogEnd;
-      Log::Write("exec") << "execution finished\n" << m_pCpuCtxt->ToString() << "\n" << m_pMemCtxt->ToString() << LogEnd;
+  while (m_spEmul->Execute(CurAddr))
+    if (!m_pCpuCtxt->GetAddress(CpuContext::AddressExecution, CurAddr))
       break;
-    }
+}
 
-    u64 NextInsn = 0;
-    if (!m_pCpuCtxt->ReadRegister(ProgPtrReg, &NextInsn, ProgPtrRegSize))
-      break;
-    CurAddr.SetOffset(NextInsn);
-  }
+bool Execution::InvalidateCache(void)
+{
+  if (m_spEmul == nullptr)
+    return false;
+  return m_spEmul->InvalidateCache();
 }
 
 bool Execution::HookInstruction(Emulator::HookCallback HkCb)
@@ -174,19 +121,19 @@ bool Execution::HookFunction(std::string const& rFuncName, Emulator::HookCallbac
   auto const& rAddr   = m_rDoc.GetAddressFromLabelName(rFuncName);
   auto const& rLbl    = m_rDoc.GetLabelFromAddress(rAddr);
 
-  if (!(rLbl.GetType() & (Label::Imported | Label::Function)))
-    return false;
+  if (rLbl.GetType() & (Label::Imported | Label::Function))
+  {
+    auto const* pCpuInfo = m_spArch->GetCpuInformation();
+    if (pCpuInfo == nullptr)
+      return false;
 
-  auto const* pCpuInfo = m_spArch->GetCpuInformation();
-  if (pCpuInfo == nullptr)
-    return false;
+    auto PcSize = pCpuInfo->GetSizeOfRegisterInBit(pCpuInfo->GetRegisterByType(CpuInformation::ProgramPointerRegister, m_rDoc.GetMode(rAddr))) / 8;
+    if (PcSize == 0)
+      return false;
 
-  auto PcSize = pCpuInfo->GetSizeOfRegisterInBit(pCpuInfo->GetRegisterByType(CpuInformation::ProgramPointerRegister, m_rDoc.GetMode(rAddr))) / 8;
-  if (PcSize == 0)
-    return false;
-
-  if (!m_spEmul->WriteMemory(rAddr, &s_FakeAddr, PcSize))
-    return false;
+    if (!m_spEmul->WriteMemory(rAddr, &s_FakeAddr, PcSize))
+      return false;
+  }
 
   {
     std::lock_guard<std::mutex> Lock(m_HookMutex);
@@ -198,6 +145,22 @@ bool Execution::HookFunction(std::string const& rFuncName, Emulator::HookCallbac
 
   s_FakeAddr += 4;
 
+  return true;
+}
+
+bool Execution::Hook(Address const& rAddress, u32 Type, Emulator::HookCallback Callback)
+{
+  if (m_spEmul == nullptr)
+    return false;
+  m_spEmul->AddHook(rAddress, Type, Callback);
+  return true;
+}
+
+bool Execution::Hook(std::string const& rLabelName, u32 Type, Emulator::HookCallback Callback)
+{
+  if (m_spEmul == nullptr)
+    return false;
+  m_spEmul->AddHook(m_rDoc, rLabelName, Type, Callback);
   return true;
 }
 
@@ -218,6 +181,51 @@ std::string Execution::GetHookName(void) const
   if (itHookPair == std::end(m_HookName))
     return "";
   return itHookPair->second;
+}
+
+Address Execution::GetHookAddress(std::string const& rHkFuncName) const
+{
+  std::lock_guard<std::mutex> Lock(m_HookMutex);
+  for (auto const& rHkPr : m_HookName)
+    if (rHkPr.second == rHkFuncName)
+      return rHkPr.first;
+  return Address();
+}
+
+bool Execution::GetFunctionParameter(std::string const& rCallConv, u16 ParamNo, BitVector& rParamValue) const
+{
+  auto pCallConv = m_spArch->GetCallingConvention(rCallConv, m_pCpuCtxt->GetMode());
+  if (pCallConv == nullptr)
+  {
+    Log::Write("core").Level(LogError) << "unable to find callinv convention: " << rCallConv << LogEnd;
+    return false;
+  }
+
+  return pCallConv->GetParameter(m_pCpuCtxt, m_pMemCtxt, ParamNo, rParamValue);
+}
+
+bool Execution::ReturnFromFunction(std::string const& rCallConv, u16 ParamNo) const
+{
+  auto pCallConv = m_spArch->GetCallingConvention(rCallConv, m_pCpuCtxt->GetMode());
+  if (pCallConv == nullptr)
+  {
+    Log::Write("core").Level(LogError) << "unable to find callinv convention: " << rCallConv << LogEnd;
+    return false;
+  }
+
+  return pCallConv->ReturnFromFunction(m_pCpuCtxt, m_pMemCtxt, ParamNo);
+}
+
+bool Execution::ReturnValueFromFunction(std::string const& rCallConv, u16 ParamNo, BitVector const& rRetVal) const
+{
+  auto pCallConv = m_spArch->GetCallingConvention(rCallConv, m_pCpuCtxt->GetMode());
+  if (pCallConv == nullptr)
+  {
+    Log::Write("core").Level(LogError) << "unable to find callinv convention: " << rCallConv << LogEnd;
+    return false;
+  }
+
+  return pCallConv->ReturnValueFromFunction(m_pCpuCtxt, m_pMemCtxt, ParamNo, rRetVal);
 }
 
 MEDUSA_NAMESPACE_END

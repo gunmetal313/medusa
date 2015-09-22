@@ -43,7 +43,8 @@ public:
     Database::SPType spDatabase,
     Loader::SPType spLoader,
     Architecture::VSPType spArchitectures,
-    OperatingSystem::SPType spOperatingSystem);
+    OperatingSystem::SPType spOperatingSystem,
+    bool StartAnalyzer = true);
 
   typedef std::tuple<std::string, std::string> Filter;
   typedef std::function<bool (
@@ -75,6 +76,7 @@ public:
 
   bool                            NewDocument(
     BinaryStream::SPType spBinStrm,
+    bool StartAnalyzer = true,
     AskDatabaseFunctionType AskDatabase = IgnoreDatabasePath,
     ModuleSelectorFunctionType ModuleSelector = DefaultModuleSelector,
     FunctionType BeforeStart = [](){ return true; },
@@ -97,7 +99,7 @@ public:
                                    * \param rAddr is the start address.
                                    * \param rCfg is the filled control flow graph.
                                    */
-  bool                            BuildControlFlowGraph(Address const& rAddr, ControlFlowGraph& rCfg) const;
+  bool                            BuildControlFlowGraph(Address const& rAddr, ControlFlowGraph& rCfg);
 
   Cell::SPType                      GetCell(Address const& rAddr);
   Cell::SPType const                GetCell(Address const& rAddr) const;
@@ -120,12 +122,9 @@ public:
   Address                         MakeAddress(Loader::SPType pLoader, Architecture::SPType pArch, TBase Base, TOffset Offset);
 
   bool                            CreateFunction(Address const& rAddr);
+  bool                            CreateUtf8String(Address const& rAddr);
+  bool                            CreateUtf16String(Address const& rAddr);
   void                            FindFunctionAddressFromAddress(Address::List& rFunctionAddress, Address const& rAddress) const;
-
-  bool                            MakeAsciiString(Address const& rAddr)
-  { return m_Analyzer.MakeAsciiString(m_Document, rAddr); }
-  bool MakeWindowsString(Address const& rAddr)
-  { return m_Analyzer.MakeWindowsString(m_Document, rAddr); }
 
 private:
   TaskManager        m_TaskManager;

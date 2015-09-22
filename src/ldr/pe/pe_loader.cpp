@@ -71,6 +71,7 @@ void PeLoader::FilterAndConfigureArchitectures(Architecture::VSPType& rArchs) co
     break;
 
   case PE_FILE_MACHINE_ARM:
+  case PE_FILE_MACHINE_ARMT:
     ArchName = "ARM";
     break;
 
@@ -102,6 +103,7 @@ bool PeLoader::_FindArchitectureTagAndModeByMachine(
     break;
 
   case PE_FILE_MACHINE_ARM:
+  case PE_FILE_MACHINE_ARMT:
     ArchName = "ARM";
     break;
 
@@ -184,7 +186,7 @@ template<int bit> void PeLoader::_MapSections(Document& rDoc, Architecture::VSPT
   rDoc.AddMemoryArea(new MappedMemoryArea(
     "hdr",
     0x0, HdrLen,
-    ImageBase, HdrLen,
+    Address(Address::FlatType, 0x0, ImageBase, 0x10, bit), HdrLen,
     MemoryArea::Read | MemoryArea::Write,
     ArchTag, ArchMode
     ));
