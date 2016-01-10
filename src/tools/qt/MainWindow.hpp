@@ -93,6 +93,8 @@ private:
   // Data
   QString                   _fileName;
   bool                      _documentOpened;
+  //lock ui while auto analyse like IDA
+  bool	                    _ui_locked;
   bool                      _closeWindow;
   bool                      _openDocument;
 

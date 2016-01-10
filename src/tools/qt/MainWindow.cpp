@@ -29,7 +29,8 @@ MainWindow::MainWindow(QString const& rFilePath, QString const& rDbPath)
   , _fileName("")
   , _documentOpened(false)
   , _closeWindow(false)
-  , _openDocument(false)
+  , _openDocument(false),
+  _ui_locked(false)
   , _medusa()
 {
   this->setupUi(this);
