@@ -66,7 +66,14 @@
     <property name="title">
      <string>Tools</string>
     </property>
+    <widget class="QMenu" name="menuDebug">
+     <property name="title">
+      <string>Debug</string>
+     </property>
+     <addaction name="actionTasks_list"/>
+    </widget>
     <addaction name="actionGoto"/>
+    <addaction name="menuDebug"/>
    </widget>
    <widget class="QMenu" name="menuEdit">
     <property name="title">
@@ -316,6 +323,11 @@
    </property>
    <property name="toolTip">
     <string>Load</string>
+   </property>
+  </action>
+  <action name="actionTasks_list">
+   <property name="text">
+    <string>Tasks list</string>
    </property>
   </action>
  </widget>
