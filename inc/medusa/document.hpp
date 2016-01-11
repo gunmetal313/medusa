@@ -266,6 +266,10 @@ public:
 
   std::string                   GetOperatingSystemName(void) const;
 
+  // History 100 by defult
+  bool                          SetUndoStepsConst(u64 steps);
+  u64                           GetUndoStepsConst(void);
+
 private:
   void RemoveLabelIfNeeded(Address const& rAddr);
 
@@ -279,6 +283,7 @@ private:
   Database::SPType                        m_spDatabase;
   MultiCell::Map                          m_MultiCells;
   mutable MutexType                       m_CellMutex;
+  u64                                     m_UndoStepsConsts;
 
   std::deque<Address>                     m_AddressHistory;
   std::deque<Address>::size_type          m_AddressHistoryIndex;

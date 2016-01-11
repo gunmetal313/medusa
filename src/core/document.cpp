@@ -10,7 +10,8 @@
 MEDUSA_NAMESPACE_BEGIN
 
 Document::Document(void)
-: m_AddressHistoryIndex()
+: m_AddressHistoryIndex(),
+m_UndoStepsConsts(10)
 {
 }
 
@@ -946,6 +947,18 @@ std::string Document::GetOperatingSystemName(void) const
   if (m_spDatabase == nullptr)
     return "";
   return m_spDatabase->GetOperatingSystemName();
+}
+
+bool Document::SetUndoStepsConst(u64 steps)
+{
+	if (steps < 0)
+		return false;
+	m_UndoStepsConsts = steps;
+}
+
+u64 Document::GetUndoStepsConst(void)
+{
+	return m_UndoStepsConsts;
 }
 
 MEDUSA_NAMESPACE_END
