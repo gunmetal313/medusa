@@ -73,6 +73,7 @@
      <string>Edit</string>
     </property>
     <addaction name="actionSettings"/>
+    <addaction name="actionUndo"/>
    </widget>
    <addaction name="menuFile"/>
    <addaction name="menuEdit"/>
@@ -316,6 +317,11 @@
    </property>
    <property name="toolTip">
     <string>Load</string>
+   </property>
+  </action>
+  <action name="actionUndo">
+   <property name="text">
+    <string>Undo</string>
    </property>
   </action>
  </widget>
