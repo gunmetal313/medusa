@@ -13,6 +13,7 @@ before_build:
 - cmake -G"Visual Studio 12 Win64" -DQT5_CMAKE_PATH=FALSE -DMEDUSA_CMAKE_USE_COTIRE=TRUE ..
 build:
   project: C:\projects\medusa\build\Medusa.sln
+  parallel: true
   verbosity: minimal
 test_script:
 - ctest -VV -C Release
