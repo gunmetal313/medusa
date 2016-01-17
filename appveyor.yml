@@ -10,7 +10,7 @@ before_build:
 - git submodule update --init --recursive
 - md build
 - cd build
-- cmake -G"Visual Studio 12 Win64" -DQT5_CMAKE_PATH=FALSE ..
+- cmake -G"Visual Studio 12 Win64" -DQT5_CMAKE_PATH=FALSE -DMEDUSA_CMAKE_USE_COTIRE=TRUE ..
 build:
   project: C:\projects\medusa\build\Medusa.sln
   verbosity: minimal
