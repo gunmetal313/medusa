@@ -32,4 +32,7 @@
   <qresource prefix="/fonts">
     <file alias="DejaVuSansMono.ttf">../../../font/DejaVuSansMono.ttf</file>
   </qresource>
+  <qresource prefix="/translations">
+    <file alias="rus.qm">../../../translations/rus.qm</file>
+  </qresource>
 </RCC>
