@@ -15,5 +15,3 @@ build:
   project: C:\projects\medusa\build\Medusa.sln
   parallel: true
   verbosity: minimal
-test_script:
-- ctest -VV -C Release
