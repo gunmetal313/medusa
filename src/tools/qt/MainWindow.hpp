@@ -67,6 +67,8 @@ public slots:
   void        goTo(medusa::Address const& addr);
   void        setCurrentAddress(medusa::Address const& addr);
 
+  void        slotLanguageChanged(QAction* action);
+
 signals:
   void        DisassemblyViewAdded(medusa::Address const& startAddr);
   void        SemanticViewAdded(medusa::Address const& funcAddr);
@@ -82,6 +84,15 @@ protected:
   void        closeEvent(QCloseEvent * event);
 
 private:
+  void        createLanguageMenu(void);
+  void        changeEvent(QEvent*);
+  void        loadLanguage(const QString& rLanguage);
+
+  QTranslator                _translator; // contains the translations for this application
+  QTranslator                _translatorQt;
+  QString                    _currLang; // contains the currently loaded language
+  QString                    _langPath; 
+
   // Dialog
   About                     _about;
   Goto                      _goto;

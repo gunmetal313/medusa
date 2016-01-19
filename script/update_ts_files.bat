@@ -1,4 +1,3 @@
-lupdate -verbose ../src/tools/qt -ts ../translations/rus.ts
-lupdate -verbose ../src/tools/qt -ts ../translations/deu.ts
-lupdate -verbose ../src/tools/qt -ts ../translations/eng.ts
+lupdate -verbose ../src/tools/qt -ts ../translations/ru.ts
+lupdate -verbose ../src/tools/qt -ts ../translations/de.ts
 pause

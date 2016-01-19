@@ -1,4 +1,3 @@
-lrelease -verbose ../translations/rus.ts -qm ../translations/rus.qm
-lrelease -verbose ../translations/eng.ts -qm ../translations/eng.qm
-lrelease -verbose ../translations/deu.ts -qm ../translations/deu.qm
+lrelease -verbose ../translations/ru.ts -qm ../translations/ru.qm
+lrelease -verbose ../translations/de.ts -qm ../translations/de.qm
 pause

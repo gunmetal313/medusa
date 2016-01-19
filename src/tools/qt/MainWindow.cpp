@@ -10,6 +10,7 @@
 #include <QKeySequence>
 #include <QScrollBar>
 #include <QMessageBox>
+#include <QActionGroup>
 
 #include "MainWindow.hpp"
 #include "ConfigureDialog.hpp"
@@ -21,145 +22,147 @@
 #include <medusa/user_configuration.hpp>
 
 MainWindow::MainWindow(QString const& rFilePath, QString const& rDbPath)
-  : QMainWindow(), Ui::MainWindow()
-  , _about(this)
-  , _goto(this)
-  , _settingsDialog(this, _medusa)
-  , _undoJumpView()
-  , _fileName("")
-  , _documentOpened(false)
-  , _closeWindow(false)
-  , _openDocument(false)
-  , _medusa()
+	: QMainWindow(), Ui::MainWindow()
+	, _about(this)
+	, _goto(this)
+	, _settingsDialog(this, _medusa)
+	, _undoJumpView()
+	, _fileName("")
+	, _documentOpened(false)
+	, _closeWindow(false)
+	, _openDocument(false)
+	, _medusa()
 {
-  this->setupUi(this);
+	this->setupUi(this);
 
-  medusa::Log::SetLog(boost::bind(&MainWindow::appendLog, this, _1));
+	medusa::Log::SetLog(boost::bind(&MainWindow::appendLog, this, _1));
 
-  this->tabWidget->setTabsClosable(true);
+	this->tabWidget->setTabsClosable(true);
 
-  medusa::UserConfiguration UserCfg;
-  std::string Base64Geometry = UserCfg.GetOption("ui_qt.geometry");
-  std::string Geometry = medusa::Base64Decode(Base64Geometry);
-  restoreGeometry(QByteArray(Geometry.data(), Geometry.size()));
-  std::string Base64State = UserCfg.GetOption("ui_qt.state");
-  std::string State = medusa::Base64Decode(Base64State);
-  restoreState(QByteArray(State.data(), State.size()));
+	medusa::UserConfiguration UserCfg;
+	std::string Base64Geometry = UserCfg.GetOption("ui_qt.geometry");
+	std::string Geometry = medusa::Base64Decode(Base64Geometry);
+	restoreGeometry(QByteArray(Geometry.data(), Geometry.size()));
+	std::string Base64State = UserCfg.GetOption("ui_qt.state");
+	std::string State = medusa::Base64Decode(Base64State);
+	restoreState(QByteArray(State.data(), State.size()));
 
-  connect(this->tabWidget, SIGNAL(tabCloseRequested(int)), this, SLOT(on_tabWidget_tabCloseRequested(int)));
-  connect(this, SIGNAL(logAppended(QString const &)), this, SLOT(onLogMessageAppended(QString const &)));
-  connect(this, SIGNAL(lastAddressUpdated(medusa::Address const&)), this, SLOT(setCurrentAddress(medusa::Address const&)));
+	connect(this->tabWidget, SIGNAL(tabCloseRequested(int)), this, SLOT(on_tabWidget_tabCloseRequested(int)));
+	connect(this, SIGNAL(logAppended(QString const &)), this, SLOT(onLogMessageAppended(QString const &)));
+	connect(this, SIGNAL(lastAddressUpdated(medusa::Address const&)), this, SLOT(setCurrentAddress(medusa::Address const&)));
 
-  if (rFilePath.isEmpty())
-    return;
+	createLanguageMenu();
 
-  // new document
-  if (rDbPath.isEmpty())
-  {
-    _fileName = rFilePath;
+	if (rFilePath.isEmpty())
+		return;
 
-    _medusa.NewDocument(std::make_shared<medusa::FileBinaryStream>(_fileName.toStdWString()), true,
-        [&](medusa::Path& rDbPath, std::list<medusa::Medusa::Filter> const& filters)
-        {
-        auto DbPrDbPathath = QFileDialog::getSaveFileName(this,
-            "Select a database path",
-            QString::fromStdString(rDbPath.string())
-            ).toStdString();
-        return true;
-        },
-        [&](medusa::BinaryStream::SPType bs, medusa::Database::SPType& db, medusa::Loader::SPType& ldr, medusa::Architecture::VSPType& archs, medusa::OperatingSystem::SPType& os)
-        {
-        ConfigureDialog CfgDlg(this, bs);
-        if (CfgDlg.exec() == QDialog::Rejected)
-        return false;
+	// new document
+	if (rDbPath.isEmpty())
+	{
+		_fileName = rFilePath;
 
-        db    = CfgDlg.GetSelectedDatabase();
-        ldr   = CfgDlg.GetSelectedLoader();
-        archs = CfgDlg.GetSelectedArchitectures();
-        os    = CfgDlg.GetSelectedOperatingSystem();
+		_medusa.NewDocument(std::make_shared<medusa::FileBinaryStream>(_fileName.toStdWString()), true,
+			[&](medusa::Path& rDbPath, std::list<medusa::Medusa::Filter> const& filters)
+		{
+			auto DbPrDbPathath = QFileDialog::getSaveFileName(this,
+				"Select a database path",
+				QString::fromStdString(rDbPath.string())
+				).toStdString();
+			return true;
+		},
+			[&](medusa::BinaryStream::SPType bs, medusa::Database::SPType& db, medusa::Loader::SPType& ldr, medusa::Architecture::VSPType& archs, medusa::OperatingSystem::SPType& os)
+		{
+			ConfigureDialog CfgDlg(this, bs);
+			if (CfgDlg.exec() == QDialog::Rejected)
+				return false;
 
-        return true;
-        },
-        [&](void)
-        {
-          // Widgets initialisation must be called before file mapping... Except scrollbar address
-          auto memAreaView = new MemoryAreaView(this, _medusa);
-          this->memAreaDock->setWidget(memAreaView);
-          connect(memAreaView, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
+			db = CfgDlg.GetSelectedDatabase();
+			ldr = CfgDlg.GetSelectedLoader();
+			archs = CfgDlg.GetSelectedArchitectures();
+			os = CfgDlg.GetSelectedOperatingSystem();
 
-          auto labelView = new LabelView(this, _medusa);
-          this->labelDock->setWidget(labelView);
-          connect(labelView,   SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
+			return true;
+		},
+			[&](void)
+		{
+			// Widgets initialisation must be called before file mapping... Except scrollbar address
+			auto memAreaView = new MemoryAreaView(this, _medusa);
+			this->memAreaDock->setWidget(memAreaView);
+			connect(memAreaView, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
 
-          return true;
-        },
-        [&]()
-        {
-          // FIXME If this is placed before mapping, it leads to a div to 0
-          auto sbAddr = new ScrollbarAddress(this, _medusa);
-          this->addressDock->setWidget(sbAddr);
-          connect(sbAddr, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
+			auto labelView = new LabelView(this, _medusa);
+			this->labelDock->setWidget(labelView);
+			connect(labelView, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
 
-          this->actionOpen->setEnabled(false);
-          this->actionLoad->setEnabled(false);
-          this->actionGoto->setEnabled(true);
-          this->actionClose->setEnabled(true);
-          this->_documentOpened = true;
-          this->setWindowTitle("Medusa - " + this->_fileName);
+			return true;
+		},
+			[&]()
+		{
+			// FIXME If this is placed before mapping, it leads to a div to 0
+			auto sbAddr = new ScrollbarAddress(this, _medusa);
+			this->addressDock->setWidget(sbAddr);
+			connect(sbAddr, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
 
-          addDisassemblyView(_medusa.GetDocument().GetStartAddress());
+			this->actionOpen->setEnabled(false);
+			this->actionLoad->setEnabled(false);
+			this->actionGoto->setEnabled(true);
+			this->actionClose->setEnabled(true);
+			this->_documentOpened = true;
+			this->setWindowTitle("Medusa - " + this->_fileName);
 
-          return true;
-        });
+			addDisassemblyView(_medusa.GetDocument().GetStartAddress());
 
-    return;
-  }
+			return true;
+		});
 
-  // open document
-  if (!_medusa.OpenDocument([&](
-          medusa::Path& rDatabasePath,
-          std::list<medusa::Medusa::Filter> const& rExtensionFilter
-          )
-        {
-          rDatabasePath = rDbPath.toStdWString();
-          return true;
-        }))
-  return;
+		return;
+	}
 
-  // Widgets initialisation must be called before file mapping... Except scrollbar address
-  auto memAreaView = new MemoryAreaView(this, _medusa);
-  memAreaView->Refresh();
-  this->memAreaDock->setWidget(memAreaView);
+	// open document
+	if (!_medusa.OpenDocument([&](
+		medusa::Path& rDatabasePath,
+		std::list<medusa::Medusa::Filter> const& rExtensionFilter
+		)
+	{
+		rDatabasePath = rDbPath.toStdWString();
+		return true;
+	}))
+		return;
 
-  auto labelView = new LabelView(this, _medusa);
-  labelView->Refresh();
-  this->labelDock->setWidget(labelView);
+	// Widgets initialisation must be called before file mapping... Except scrollbar address
+	auto memAreaView = new MemoryAreaView(this, _medusa);
+	memAreaView->Refresh();
+	this->memAreaDock->setWidget(memAreaView);
 
-  auto pBindingView = new BindingView(_medusa);
-  this->BindingDock->setWidget(pBindingView);
+	auto labelView = new LabelView(this, _medusa);
+	labelView->Refresh();
+	this->labelDock->setWidget(labelView);
 
-  //medusa::Architecture::VSPType archs;
-  //archs.push_back(architecture);
-  //this->_medusa.Start(db->GetBinaryStream(), db, loader, archs, os);
+	auto pBindingView = new BindingView(_medusa);
+	this->BindingDock->setWidget(pBindingView);
 
-  // FIXME If this is placed before mapping, it leads to a div to 0
-  auto sbAddr = new ScrollbarAddress(this, _medusa);
-  sbAddr->Refresh();
-  this->addressDock->setWidget(sbAddr);
+	//medusa::Architecture::VSPType archs;
+	//archs.push_back(architecture);
+	//this->_medusa.Start(db->GetBinaryStream(), db, loader, archs, os);
 
-  this->actionOpen->setEnabled(false);
-  this->actionLoad->setEnabled(false);
-  this->actionGoto->setEnabled(true);
-  this->actionClose->setEnabled(true);
-  this->_documentOpened = true;
-  this->setWindowTitle("Medusa - " + this->_fileName);
+	// FIXME If this is placed before mapping, it leads to a div to 0
+	auto sbAddr = new ScrollbarAddress(this, _medusa);
+	sbAddr->Refresh();
+	this->addressDock->setWidget(sbAddr);
 
-  addDisassemblyView(_medusa.GetDocument().GetStartAddress());
+	this->actionOpen->setEnabled(false);
+	this->actionLoad->setEnabled(false);
+	this->actionGoto->setEnabled(true);
+	this->actionClose->setEnabled(true);
+	this->_documentOpened = true;
+	this->setWindowTitle("Medusa - " + this->_fileName);
 
-  connect(labelView,   SIGNAL(goTo(medusa::Address const&)), this,                 SLOT(goTo(medusa::Address const&)));
-  connect(sbAddr,      SIGNAL(goTo(medusa::Address const&)), this,                 SLOT(goTo(medusa::Address const&)));
-  connect(memAreaView, SIGNAL(goTo(medusa::Address const&)), this,                 SLOT(goTo(medusa::Address const&)));
-  connect(this,        SIGNAL(lastAddressUpdated(medusa::Address const&)), sbAddr, SLOT(setCurrentAddress(medusa::Address const&)));
+	addDisassemblyView(_medusa.GetDocument().GetStartAddress());
+
+	connect(labelView, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
+	connect(sbAddr, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
+	connect(memAreaView, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
+	connect(this, SIGNAL(lastAddressUpdated(medusa::Address const&)), sbAddr, SLOT(setCurrentAddress(medusa::Address const&)));
 }
 
 MainWindow::~MainWindow()
@@ -168,349 +171,438 @@ MainWindow::~MainWindow()
 
 bool MainWindow::openDocument()
 {
-  if (_documentOpened)
-    return false;
+	if (_documentOpened)
+		return false;
 
-  _fileName = QFileDialog::getOpenFileName(this, tr("Select a file"));
-  if (_fileName.isNull())
-    return false;
+	_fileName = QFileDialog::getOpenFileName(this, tr("Select a file"));
+	if (_fileName.isNull())
+		return false;
 
-  return _medusa.NewDocument(std::make_shared<medusa::FileBinaryStream>(_fileName.toStdWString()), true,
-    [&](medusa::Path& rDbPath, std::list<medusa::Medusa::Filter> const& filters)
-  {
-    auto DbPrDbPathath = QFileDialog::getSaveFileName(this,
-      "Select a database path",
-      QString::fromStdString(rDbPath.string())
-      ).toStdString();
-    return true;
-  },
-    [&](medusa::BinaryStream::SPType bs, medusa::Database::SPType& db, medusa::Loader::SPType& ldr, medusa::Architecture::VSPType& archs, medusa::OperatingSystem::SPType& os)
-  {
-    ConfigureDialog CfgDlg(this, bs);
-    if (CfgDlg.exec() == QDialog::Rejected)
-      return false;
+	return _medusa.NewDocument(std::make_shared<medusa::FileBinaryStream>(_fileName.toStdWString()), true,
+		[&](medusa::Path& rDbPath, std::list<medusa::Medusa::Filter> const& filters)
+	{
+		auto DbPrDbPathath = QFileDialog::getSaveFileName(this,
+			tr("Select a database path"),
+			QString::fromStdString(rDbPath.string())
+			).toStdString();
+		return true;
+	},
+		[&](medusa::BinaryStream::SPType bs, medusa::Database::SPType& db, medusa::Loader::SPType& ldr, medusa::Architecture::VSPType& archs, medusa::OperatingSystem::SPType& os)
+	{
+		ConfigureDialog CfgDlg(this, bs);
+		if (CfgDlg.exec() == QDialog::Rejected)
+			return false;
 
-    db    = CfgDlg.GetSelectedDatabase();
-    ldr   = CfgDlg.GetSelectedLoader();
-    archs = CfgDlg.GetSelectedArchitectures();
-    os    = CfgDlg.GetSelectedOperatingSystem();
+		db = CfgDlg.GetSelectedDatabase();
+		ldr = CfgDlg.GetSelectedLoader();
+		archs = CfgDlg.GetSelectedArchitectures();
+		os = CfgDlg.GetSelectedOperatingSystem();
 
-    return true;
-  },
-    [&](void)
-  {
-    // Widgets initialisation must be called before file mapping... Except scrollbar address
-    auto memAreaView = new MemoryAreaView(this, _medusa);
-    this->memAreaDock->setWidget(memAreaView);
-    connect(memAreaView, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
+		return true;
+	},
+		[&](void)
+	{
+		// Widgets initialisation must be called before file mapping... Except scrollbar address
+		auto memAreaView = new MemoryAreaView(this, _medusa);
+		this->memAreaDock->setWidget(memAreaView);
+		connect(memAreaView, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
 
-    auto labelView = new LabelView(this, _medusa);
-    this->labelDock->setWidget(labelView);
-    connect(labelView,   SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
+		auto labelView = new LabelView(this, _medusa);
+		this->labelDock->setWidget(labelView);
+		connect(labelView, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
 
-    auto pBindingView = new BindingView(_medusa);
-    this->BindingDock->setWidget(pBindingView);
+		auto pBindingView = new BindingView(_medusa);
+		this->BindingDock->setWidget(pBindingView);
 
-    return true;
-  },
-    [&]()
-  {
-    // FIXME If this is placed before mapping, it leads to a div to 0
-    auto sbAddr = new ScrollbarAddress(this, _medusa);
-    this->addressDock->setWidget(sbAddr);
-    connect(sbAddr, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
+		return true;
+	},
+		[&]()
+	{
+		// FIXME If this is placed before mapping, it leads to a div to 0
+		auto sbAddr = new ScrollbarAddress(this, _medusa);
+		this->addressDock->setWidget(sbAddr);
+		connect(sbAddr, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
 
-    this->actionOpen->setEnabled(false);
-    this->actionLoad->setEnabled(false);
-    this->actionGoto->setEnabled(true);
-    this->actionClose->setEnabled(true);
-    this->_documentOpened = true;
-    this->setWindowTitle("Medusa - " + this->_fileName);
+		this->actionOpen->setEnabled(false);
+		this->actionLoad->setEnabled(false);
+		this->actionGoto->setEnabled(true);
+		this->actionClose->setEnabled(true);
+		this->_documentOpened = true;
+		this->setWindowTitle("Medusa - " + this->_fileName);
 
-    addDisassemblyView(_medusa.GetDocument().GetStartAddress());
+		addDisassemblyView(_medusa.GetDocument().GetStartAddress());
 
-    return true;
-  });
+		return true;
+	});
 }
 
 bool MainWindow::loadDocument()
 {
-  if (_documentOpened)
-    return false;
+	if (_documentOpened)
+		return false;
 
-  if (!_medusa.OpenDocument([&](
-    medusa::Path& rDatabasePath,
-    std::list<medusa::Medusa::Filter> const& rExtensionFilter
-    )
-  {
-    QStringList Filters;
-    for (auto itFlt = std::begin(rExtensionFilter), itEnd = std::end(rExtensionFilter); itFlt != itEnd; ++itFlt)
-    {
-      Filters.push_back(QString("%1 (*%2)").arg(std::get<0>(*itFlt).c_str(), std::get<1>(*itFlt).c_str()));
-    }
-    rDatabasePath = QFileDialog::getOpenFileName(this, "Select a saved database", QString(), Filters.join(";;")).toStdString();
-    if (rDatabasePath.empty())
-      return false;
-    _fileName = QString::fromStdString(rDatabasePath.string());
-    return true;
-  }))
-    return false;
+	if (!_medusa.OpenDocument([&](
+		medusa::Path& rDatabasePath,
+		std::list<medusa::Medusa::Filter> const& rExtensionFilter
+		)
+	{
+		QStringList Filters;
+		for (auto itFlt = std::begin(rExtensionFilter), itEnd = std::end(rExtensionFilter); itFlt != itEnd; ++itFlt)
+		{
+			Filters.push_back(QString("%1 (*%2)").arg(std::get<0>(*itFlt).c_str(), std::get<1>(*itFlt).c_str()));
+		}
+		rDatabasePath = QFileDialog::getOpenFileName(this, "Select a saved database", QString(), Filters.join(";;")).toStdString();
+		if (rDatabasePath.empty())
+			return false;
+		_fileName = QString::fromStdString(rDatabasePath.string());
+		return true;
+	}))
+		return false;
 
-  // Widgets initialisation must be called before file mapping... Except scrollbar address
-  auto memAreaView = new MemoryAreaView(this, _medusa);
-  memAreaView->Refresh();
-  this->memAreaDock->setWidget(memAreaView);
+	// Widgets initialisation must be called before file mapping... Except scrollbar address
+	auto memAreaView = new MemoryAreaView(this, _medusa);
+	memAreaView->Refresh();
+	this->memAreaDock->setWidget(memAreaView);
 
-  auto labelView = new LabelView(this, _medusa);
-  labelView->Refresh();
-  this->labelDock->setWidget(labelView);
+	auto labelView = new LabelView(this, _medusa);
+	labelView->Refresh();
+	this->labelDock->setWidget(labelView);
 
-  //medusa::Architecture::VSPType archs;
-  //archs.push_back(architecture);
-  //this->_medusa.Start(db->GetBinaryStream(), db, loader, archs, os);
+	//medusa::Architecture::VSPType archs;
+	//archs.push_back(architecture);
+	//this->_medusa.Start(db->GetBinaryStream(), db, loader, archs, os);
 
-  // FIXME If this is placed before mapping, it leads to a div to 0
-  auto sbAddr = new ScrollbarAddress(this, _medusa);
-  sbAddr->Refresh();
-  this->addressDock->setWidget(sbAddr);
+	// FIXME If this is placed before mapping, it leads to a div to 0
+	auto sbAddr = new ScrollbarAddress(this, _medusa);
+	sbAddr->Refresh();
+	this->addressDock->setWidget(sbAddr);
 
-  this->actionOpen->setEnabled(false);
-  this->actionLoad->setEnabled(false);
-  this->actionGoto->setEnabled(true);
-  this->actionClose->setEnabled(true);
-  this->_documentOpened = true;
-  this->setWindowTitle("Medusa - " + this->_fileName);
+	this->actionOpen->setEnabled(false);
+	this->actionLoad->setEnabled(false);
+	this->actionGoto->setEnabled(true);
+	this->actionClose->setEnabled(true);
+	this->_documentOpened = true;
+	this->setWindowTitle("Medusa - " + this->_fileName);
 
-  addDisassemblyView(_medusa.GetDocument().GetStartAddress());
+	addDisassemblyView(_medusa.GetDocument().GetStartAddress());
 
-  connect(labelView,   SIGNAL(goTo(medusa::Address const&)), this,                 SLOT(goTo(medusa::Address const&)));
-  connect(sbAddr,      SIGNAL(goTo(medusa::Address const&)), this,                 SLOT(goTo(medusa::Address const&)));
-  connect(memAreaView, SIGNAL(goTo(medusa::Address const&)), this,                 SLOT(goTo(medusa::Address const&)));
-  connect(this,        SIGNAL(lastAddressUpdated(medusa::Address const&)), sbAddr, SLOT(setCurrentAddress(medusa::Address const&)));
+	connect(labelView, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
+	connect(sbAddr, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
+	connect(memAreaView, SIGNAL(goTo(medusa::Address const&)), this, SLOT(goTo(medusa::Address const&)));
+	connect(this, SIGNAL(lastAddressUpdated(medusa::Address const&)), sbAddr, SLOT(setCurrentAddress(medusa::Address const&)));
 
-  return true;
+	return true;
 }
 
 bool MainWindow::saveDocument()
 {
-  return _medusa.GetDocument().Flush();
+	return _medusa.GetDocument().Flush();
 }
 
 bool MainWindow::closeDocument()
 {
-  if (!_documentOpened)
-    return false;
+	if (!_documentOpened)
+		return false;
 
-  int Result = QMessageBox::question(
-    this, "Quit", "Do you wish to save the current document before quitting?",
-    QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
-  switch (Result)
-  {
-  case QMessageBox::Yes:
-    _medusa.GetDocument().Flush();
-    break;
+	int Result = QMessageBox::question(
+		this, tr("Quit"), tr("Do you wish to save the current document before quitting?"),
+		QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
+	switch (Result)
+	{
+	case QMessageBox::Yes:
+		_medusa.GetDocument().Flush();
+		break;
 
-  case QMessageBox::No:
-    break;
+	case QMessageBox::No:
+		break;
 
-  default:
-    return false;
-  }
+	default:
+		return false;
+	}
 
-  this->_documentOpened = false;
-  this->actionOpen->setEnabled(true);
-  this->actionLoad->setEnabled(true);
-  this->actionClose->setEnabled(false);
-  this->actionGoto->setEnabled(false);
+	this->_documentOpened = false;
+	this->actionOpen->setEnabled(true);
+	this->actionLoad->setEnabled(true);
+	this->actionClose->setEnabled(false);
+	this->actionGoto->setEnabled(false);
 
-  if (!_medusa.CloseDocument())
-    return false;
+	if (!_medusa.CloseDocument())
+		return false;
 
-  //this->logEdit->clear();
-  auto labelView = this->labelDock->widget();
-  this->labelDock->setWidget(nullptr);
-  delete labelView;
-  
-  auto memAreaDockview =  this->memAreaDock->widget();
-  this->memAreaDock->setWidget(nullptr);
-  delete memAreaDockview;
-  
-  auto BindingView = this->memAreaDock->widget();
-  this->BindingDock->setWidget(nullptr);
-  delete BindingView;
-  
-  auto AddrView = this->addressDock->widget();
-  this->addressDock->setWidget(nullptr);
-  delete AddrView;
-  
-  int tabWidgetCount = this->tabWidget->count();
-  for (int i = 0; i < tabWidgetCount; ++i)
-  {
-    auto curWidget = this->tabWidget->widget(i);
-    this->tabWidget->removeTab(i);
-    delete curWidget;
-  }
+	//this->logEdit->clear();
+	auto labelView = this->labelDock->widget();
+	this->labelDock->setWidget(nullptr);
+	delete labelView;
 
-  return true;
+	auto memAreaDockview = this->memAreaDock->widget();
+	this->memAreaDock->setWidget(nullptr);
+	delete memAreaDockview;
+
+	auto BindingView = this->memAreaDock->widget();
+	this->BindingDock->setWidget(nullptr);
+	delete BindingView;
+
+	auto AddrView = this->addressDock->widget();
+	this->addressDock->setWidget(nullptr);
+	delete AddrView;
+
+	int tabWidgetCount = this->tabWidget->count();
+	for (int i = 0; i < tabWidgetCount; ++i)
+	{
+		auto curWidget = this->tabWidget->widget(i);
+		this->tabWidget->removeTab(i);
+		delete curWidget;
+	}
+
+	return true;
 }
 
 void MainWindow::appendLog(std::string const& msg)
 {
-  emit logAppended(QString::fromStdString(msg));
+	emit logAppended(QString::fromStdString(msg));
 }
 
 void MainWindow::addDisassemblyView(medusa::Address const& startAddr)
 {
-  auto disasmView = new DisassemblyView(this, &_medusa);
-  connect(disasmView, SIGNAL(cursorAddressUpdated(medusa::Address const&)), this->addressDock->widget(), SLOT(setCurrentAddress(medusa::Address const&)));
-  connect(disasmView, SIGNAL(cursorAddressUpdated(medusa::Address const&)), this, SLOT(setCurrentAddress(medusa::Address const&)));
-  this->tabWidget->addTab(disasmView, QIcon(":/icons/view-disassembly.png"), "Disassembly (text)");
-  disasmView->goTo(startAddr);
+	auto disasmView = new DisassemblyView(this, &_medusa);
+	connect(disasmView, SIGNAL(cursorAddressUpdated(medusa::Address const&)), this->addressDock->widget(), SLOT(setCurrentAddress(medusa::Address const&)));
+	connect(disasmView, SIGNAL(cursorAddressUpdated(medusa::Address const&)), this, SLOT(setCurrentAddress(medusa::Address const&)));
+	this->tabWidget->addTab(disasmView, QIcon(":/icons/view-disassembly.png"), tr("Disassembly (text)"));
+	disasmView->goTo(startAddr);
 }
 
 void MainWindow::addSemanticView(medusa::Address const& funcAddr)
 {
-  auto func = _medusa.GetMultiCell(funcAddr);
-  if (func == nullptr || func->GetType() != medusa::MultiCell::FunctionType)
-    return;
+	auto func = _medusa.GetMultiCell(funcAddr);
+	if (func == nullptr || func->GetType() != medusa::MultiCell::FunctionType)
+		return;
 
-  auto lbl = _medusa.GetDocument().GetLabelFromAddress(funcAddr);
-  QString funcLbl = QString::fromStdString(funcAddr.ToString());
-  if (lbl.GetType() != medusa::Label::Unknown)
-    funcLbl = QString::fromStdString(lbl.GetLabel());
+	auto lbl = _medusa.GetDocument().GetLabelFromAddress(funcAddr);
+	QString funcLbl = QString::fromStdString(funcAddr.ToString());
+	if (lbl.GetType() != medusa::Label::Unknown)
+		funcLbl = QString::fromStdString(lbl.GetLabel());
 
-  auto semView = new SemanticView(this, _medusa, funcAddr);
-  this->tabWidget->addTab(semView, QIcon(":/icons/view-semantic.png"), QString("Semantic of function %1").arg(funcLbl));
+	auto semView = new SemanticView(this, _medusa, funcAddr);
+	this->tabWidget->addTab(semView, QIcon(":/icons/view-semantic.png"), QString("Semantic of function %1").arg(funcLbl));
 }
 
 void MainWindow::addControlFlowGraphView(medusa::Address const& funcAddr)
 {
-  auto lbl = _medusa.GetDocument().GetLabelFromAddress(funcAddr);
-  QString funcLbl = QString::fromStdString(funcAddr.ToString());
-  if (lbl.GetType() != medusa::Label::Unknown)
-    funcLbl = QString::fromStdString(lbl.GetLabel());
+	auto lbl = _medusa.GetDocument().GetLabelFromAddress(funcAddr);
+	QString funcLbl = QString::fromStdString(funcAddr.ToString());
+	if (lbl.GetType() != medusa::Label::Unknown)
+		funcLbl = QString::fromStdString(lbl.GetLabel());
 
-  auto cfgView = new ControlFlowGraphView(this);
-  auto cfgScene = new ControlFlowGraphScene(this->tabWidget, _medusa, funcAddr);
-  cfgView->setScene(cfgScene);
-  this->tabWidget->addTab(cfgView, QIcon(":/icons/view-graph.png"), QString("Graph of function %1").arg(funcLbl));
+	auto cfgView = new ControlFlowGraphView(this);
+	auto cfgScene = new ControlFlowGraphScene(this->tabWidget, _medusa, funcAddr);
+	cfgView->setScene(cfgScene);
+	this->tabWidget->addTab(cfgView, QIcon(":/icons/view-graph.png"), QString("Graph of function %1").arg(funcLbl));
 }
 
 void MainWindow::addGraphView(medusa::Address const& rMcAddr)
 {
-  auto lbl = _medusa.GetDocument().GetLabelFromAddress(rMcAddr);
-  QString McLbl = QString::fromStdString(rMcAddr.ToString());
-  if (lbl.GetType() != medusa::Label::Unknown)
-    McLbl = QString::fromStdString(lbl.GetLabel());
+	auto lbl = _medusa.GetDocument().GetLabelFromAddress(rMcAddr);
+	QString McLbl = QString::fromStdString(rMcAddr.ToString());
+	if (lbl.GetType() != medusa::Label::Unknown)
+		McLbl = QString::fromStdString(lbl.GetLabel());
 
-  auto pGraphView = new GraphView(this);
-  auto pGraphScene = new GraphScene(this->tabWidget, _medusa, rMcAddr);
-  pGraphView->setScene(pGraphScene);
-  this->tabWidget->addTab(pGraphView, QIcon(":/icons/view-graph.png"), QString("Graph of %1").arg(McLbl));
+	auto pGraphView = new GraphView(this);
+	auto pGraphScene = new GraphScene(this->tabWidget, _medusa, rMcAddr);
+	pGraphView->setScene(pGraphScene);
+	this->tabWidget->addTab(pGraphView, QIcon(":/icons/view-graph.png"), QString("Graph of %1").arg(McLbl));
 }
 
 void MainWindow::on_actionAbout_triggered()
 {
-  this->_about.exec();
+	this->_about.exec();
 }
 
 void MainWindow::on_actionOpen_triggered()
 {
-  // If a document is already opened,
-  // Confirmation dialog
-  if (this->_documentOpened)
-  {
-    int Reply = QMessageBox::question(this, "Confirmation", "Are you sure you want to close this document?", QMessageBox::Yes | QMessageBox::No);
+	// If a document is already opened,
+	// Confirmation dialog
+	if (this->_documentOpened)
+	{
+		int Reply = QMessageBox::question(this, tr("Confirmation"), tr("Are you sure you want to close this document?"), QMessageBox::Yes | QMessageBox::No);
 
-    if (Reply == QMessageBox::No)
-      return;
+		if (Reply == QMessageBox::No)
+			return;
 
-    if (!this->closeDocument())
-      return;
+		if (!this->closeDocument())
+			return;
 
-    this->_openDocument = true;
-  }
-  this->openDocument();
+		this->_openDocument = true;
+	}
+	this->openDocument();
 }
 
 void MainWindow::on_actionLoad_triggered()
 {
-  this->loadDocument();
+	this->loadDocument();
 }
 
 void MainWindow::on_actionSave_triggered()
 {
-  this->saveDocument();
+	this->saveDocument();
 }
 
 void MainWindow::on_actionClose_triggered()
 {
-  this->closeDocument();
+	this->closeDocument();
 }
 
 void MainWindow::on_actionGoto_triggered()
 {
-  if (this->_goto.exec() == QDialog::Rejected)
-    return;
+	if (this->_goto.exec() == QDialog::Rejected)
+		return;
 
-  auto addr = _goto.address();
-  emit goTo(addr);
+	auto addr = _goto.address();
+	emit goTo(addr);
 }
 
 void MainWindow::on_actionDisassembly_triggered()
 {
-  addDisassemblyView(_medusa.GetDocument().GetAddressFromLabelName("start"));
+	addDisassemblyView(_medusa.GetDocument().GetAddressFromLabelName("start"));
 }
 
 void MainWindow::on_actionSettings_triggered()
 {
-  this->_settingsDialog.exec();
+	this->_settingsDialog.exec();
 }
 
 void MainWindow::on_tabWidget_tabCloseRequested(int index)
 {
-  auto curWidget = this->tabWidget->widget(index);
-  this->tabWidget->removeTab(index);
-  delete curWidget;
+	auto curWidget = this->tabWidget->widget(index);
+	this->tabWidget->removeTab(index);
+	delete curWidget;
 }
 
 void MainWindow::onLogMessageAppended(QString const & msg)
 {
-  //https://qt-project.org/forums/viewthread/19083
-  bool DoScroll = (logEdit->verticalScrollBar()->sliderPosition() == logEdit->verticalScrollBar()->maximum());
-  logEdit->insertPlainText(msg);
-  if (DoScroll)
-    logEdit->verticalScrollBar()->setSliderPosition(logEdit->verticalScrollBar()->maximum());
+	//https://qt-project.org/forums/viewthread/19083
+	bool DoScroll = (logEdit->verticalScrollBar()->sliderPosition() == logEdit->verticalScrollBar()->maximum());
+	logEdit->insertPlainText(msg);
+	if (DoScroll)
+		logEdit->verticalScrollBar()->setSliderPosition(logEdit->verticalScrollBar()->maximum());
 }
 
 void MainWindow::goTo(medusa::Address const& addr)
 {
-  // LATER: implement goTo method for all views
-  auto disasmView = dynamic_cast<DisassemblyView*>(this->tabWidget->currentWidget());
-  if (disasmView == nullptr)
-    return;
-  if (!disasmView->goTo(addr))
-  {
-    QMessageBox::warning(this, "Invalid address", "This address looks invalid");
-  }
-  emit lastAddressUpdated(addr);
+	// LATER: implement goTo method for all views
+	auto disasmView = dynamic_cast<DisassemblyView*>(this->tabWidget->currentWidget());
+	if (disasmView == nullptr)
+		return;
+	if (!disasmView->goTo(addr))
+	{
+		QMessageBox::warning(this, tr("Invalid address"), tr("This address looks invalid"));
+	}
+	emit lastAddressUpdated(addr);
 }
 
 void MainWindow::setCurrentAddress(medusa::Address const& addr)
 {
-  medusa::TOffset Off;
-  QString OffStr = "";
-  if (!_medusa.GetDocument().ConvertAddressToFileOffset(addr, Off))
-    OffStr = "(unknown)";
-  else
-    OffStr.sprintf("0x%016x", Off);
-  statusBar()->showMessage(QString("va: %1 \xE2\x86\x92 offset: %2").arg(QString::fromStdString(addr.ToString()), OffStr));
+	medusa::TOffset Off;
+	QString OffStr = "";
+	if (!_medusa.GetDocument().ConvertAddressToFileOffset(addr, Off))
+		OffStr = "(unknown)";
+	else
+		OffStr.sprintf("0x%016x", Off);
+	statusBar()->showMessage(QString("va: %1 \xE2\x86\x92 offset: %2").arg(QString::fromStdString(addr.ToString()), OffStr));
 }
 
 void MainWindow::closeEvent(QCloseEvent * event)
 {
-  medusa::UserConfiguration UserCfg;
-  UserCfg.SetOption("ui_qt.geometry", medusa::Base64Encode(std::string(saveGeometry().constData(), saveGeometry().length())));
-  UserCfg.SetOption("ui_qt.state", medusa::Base64Encode(std::string(saveState().constData(), saveState().length())));
-  event->accept();
+	medusa::UserConfiguration UserCfg;
+	UserCfg.SetOption("ui_qt.geometry", medusa::Base64Encode(std::string(saveGeometry().constData(), saveGeometry().length())));
+	UserCfg.SetOption("ui_qt.state", medusa::Base64Encode(std::string(saveState().constData(), saveState().length())));
+	event->accept();
 }
+
+// Called every time, when a menu entry of the language menu is called
+void MainWindow::slotLanguageChanged(QAction* action)
+{
+	if (0 != action) {
+		// load the language dependant on the action content
+		loadLanguage(action->data().toString());
+	}
+}
+
+void MainWindow::createLanguageMenu(void)
+{
+	QActionGroup* langGroup = new QActionGroup(this->menuLanguages);
+	langGroup->setExclusive(true);
+
+	connect(langGroup, SIGNAL(triggered(QAction *)), this, SLOT(slotLanguageChanged(QAction *)));
+
+	_langPath = ":/translations";
+	QString defaultLocale = QLocale::system().name();
+	defaultLocale.truncate(defaultLocale.lastIndexOf('_'));
+	QDir dir(_langPath);
+	QStringList fileNames = dir.entryList(QStringList("*.qm"));
+	//TODO validate qt file name and qm file??
+	for (int i = 0; i < fileNames.size(); ++i) {
+		QString locale;
+		locale = fileNames[i];
+		locale.truncate(locale.lastIndexOf('.'));
+		QString lang_name = QLocale::languageToString(QLocale(locale).language());
+		//TODO check ico no exists...
+		QIcon ico(QString(":/icons/languages/" + locale + ".png"));
+
+		QAction *action = new QAction(ico, lang_name, this);
+		medusa::Log::Write("ui_qt") << "action " << lang_name.toStdString() << medusa::LogEnd;
+		action->setCheckable(true);
+		action->setData(locale);
+		this->menuLanguages->addAction(action);
+		langGroup->addAction(action);
+		if (defaultLocale == locale)
+		{
+			action->setChecked(true);
+		}
+	}
+}
+
+void MainWindow::changeEvent(QEvent* event)
+{
+	if (0 != event) {
+		switch (event->type()) {
+			// this event is send if a translator is loaded
+		case QEvent::LanguageChange:
+			this->retranslateUi(this);
+			break;
+
+			// this event is send, if the system, language changes
+		case QEvent::LocaleChange:
+		{
+			QString locale = QLocale::system().name();
+			locale.truncate(locale.lastIndexOf('_'));
+			loadLanguage(locale);
+		}
+		break;
+		}
+	}
+	QMainWindow::changeEvent(event);
+}
+
+void switchTranslator(QTranslator& translator, const QString& filename)
+{
+	// remove the old translator
+	qApp->removeTranslator(&translator);
+
+	// load the new translator
+	if (translator.load(filename))
+		qApp->installTranslator(&translator);
+}
+
+void MainWindow::loadLanguage(const QString& rLanguage)
+{
+	if (_currLang != rLanguage) {
+		_currLang = rLanguage;
+		QLocale locale = QLocale(_currLang);
+		QLocale::setDefault(locale);
+		QString languageName = QLocale::languageToString(locale.language());
+		switchTranslator(_translator, QString("%1/%2.qm").arg(_langPath).arg(rLanguage));
+		switchTranslator(_translatorQt, QString("%1/%2.qm").arg(rLanguage));
+	}
+}
+
+

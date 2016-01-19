@@ -38,6 +38,6 @@
   </qresource>
   <qresource prefix="/translations">
     <file alias="ru.qm">../../../translations/ru.qm</file>
-	<file alias="en.qm">../../../translations/en.qm</file>
+	<file alias="de.qm">../../../translations/de.qm</file>
   </qresource>
 </RCC>
