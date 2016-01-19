@@ -29,10 +29,15 @@
     <file alias="view-hexdump.png">../../../img/icons/view-hexdump.png</file>
     <file alias="view-semantic.png">../../../img/icons/view-semantic.png</file>
   </qresource>
+  <qresource prefix="/icons/languages">
+    <file alias="ru.png">../../../img/icons/languages/ru.png</file>
+	<file alias="de.png">../../../img/icons/languages/de.png</file>
+  </qresource>
   <qresource prefix="/fonts">
     <file alias="DejaVuSansMono.ttf">../../../font/DejaVuSansMono.ttf</file>
   </qresource>
   <qresource prefix="/translations">
-    <file alias="rus.qm">../../../translations/rus.qm</file>
+    <file alias="ru.qm">../../../translations/ru.qm</file>
+	<file alias="en.qm">../../../translations/en.qm</file>
   </qresource>
 </RCC>
