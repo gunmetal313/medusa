@@ -30,7 +30,10 @@ matrix:
         - pwd
         - make
         - ls -la
-      script: echo "no"
+      script:
+        - cd ..
+        - export PATH=$(pwd)/cppcheck:$PATH
+        - cppcheck --version
 cache:
 - ccache
 - apt
