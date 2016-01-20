@@ -23,6 +23,9 @@ matrix:
           sources: ['ubuntu-toolchain-r-test']
           packages: ['python-pygments','libqt4-core','libqt4-gui','libqt4-dev','qt4-dev-tools','qt4-qmake','libxml2-utils','libpcre3','gdb','unzip']
       env: COMPILERCXX=g++-5 COMPILERCC=gcc-5 TRAVIS_CPPCAT=TRUE
+      before_install: echo "no"
+      before_script: echo "no"
+      script: echo "no"
 cache:
 - ccache
 - apt
@@ -42,7 +45,7 @@ before_script:
   - export CC="ccache $COMPILERCC"
   - export CXX="ccache $COMPILERCXX"
   - ccache -s
-  - cmake .. -DMEDUSA_CMAKE_USE_COTIRE=TRUE -DMEDUSA_BUILD_WITH_OGDF=$TRAVIS_MEDUSA_BUILD_WITH_OGDF -DCMAKE_BUILD_TYPE=Release
+  - cmake .. -DMEDUSA_BUILD_WITH_OGDF=$TRAVIS_MEDUSA_BUILD_WITH_OGDF -DCMAKE_BUILD_TYPE=Release
   - cd ..
 
 script:
