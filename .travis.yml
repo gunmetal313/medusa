@@ -16,6 +16,13 @@ matrix:
           sources: ['ubuntu-toolchain-r-test','boost-latest']
           packages: ['g++-5','ccache','libboost1.55-all-dev']
       env: COMPILERCXX=g++-5 COMPILERCC=gcc-5 TRAVIS_MEDUSA_BUILD_WITH_OGDF=FALSE
+    - os: linux
+      compiler: gcc
+      addons:
+        apt:
+          sources: ['ubuntu-toolchain-r-test']
+          packages: ['python-pygments','libqt4-core','libqt4-gui','libqt4-dev','qt4-dev-tools','qt4-qmake','libxml2-utils','libpcre3','gdb','unzip']
+      env: COMPILERCXX=g++-5 COMPILERCC=gcc-5 TRAVIS_CPPCAT=TRUE
 cache:
 - ccache
 - apt
