@@ -35,7 +35,7 @@ matrix:
         - export PATH=$(pwd)/cppcheck:$PATH
         - pwd
         - cppcheck --version
-        - cppcheck -q -j4 --enable=all  --template='{id} {file}:{line} {message}' --suppress=variableScope --platform=unix64 ./
+        - cppcheck -q -j4 --enable=all  --template='{id} {file}:{line} {message}' --suppress=variableScope --platform=unix64 -I inc/medusa .
 cache:
 - ccache
 - apt
