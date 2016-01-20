@@ -8,14 +8,35 @@ matrix:
         apt:
           sources: ['ubuntu-toolchain-r-test','boost-latest']
           packages: ['gcc-4.9','g++-4.9','ccache','libboost1.55-all-dev']
-      env: COMPILERCXX=g++-4.9 COMPILERCC=gcc-4.9 TRAVIS_MEDUSA_BUILD_WITH_OGDF=FALSE
+      env: COMPILERCXX=g++-4.9 COMPILERCC=gcc-4.9 TRAVIS_MEDUSA_BUILD_WITH_OGDF=FALSE BUILD_TYPE=Release
+    - os: linux
+      compiler: gcc
+      addons:
+        apt:
+          sources: ['ubuntu-toolchain-r-test','boost-latest']
+          packages: ['gcc-4.9','g++-4.9','ccache','libboost1.55-all-dev']
+      env: COMPILERCXX=g++-4.9 COMPILERCC=gcc-4.9 TRAVIS_MEDUSA_BUILD_WITH_OGDF=TRUE BUILD_TYPE=Release
     - os: linux
       compiler: gcc
       addons:
         apt:
           sources: ['ubuntu-toolchain-r-test','boost-latest']
           packages: ['g++-5','ccache','libboost1.55-all-dev']
-      env: COMPILERCXX=g++-5 COMPILERCC=gcc-5 TRAVIS_MEDUSA_BUILD_WITH_OGDF=FALSE
+      env: COMPILERCXX=g++-5 COMPILERCC=gcc-5 TRAVIS_MEDUSA_BUILD_WITH_OGDF=FALSE BUILD_TYPE=Release
+    - os: linux
+      compiler: gcc
+      addons:
+        apt:
+          sources: ['ubuntu-toolchain-r-test','boost-latest']
+          packages: ['g++-5','ccache','libboost1.55-all-dev']
+      env: COMPILERCXX=g++-5 COMPILERCC=gcc-5 TRAVIS_MEDUSA_BUILD_WITH_OGDF=TRUE BUILD_TYPE=Release
+    - os: linux
+      compiler: gcc
+      addons:
+        apt:
+          sources: ['ubuntu-toolchain-r-test','boost-latest','beineri/opt-qt55']
+          packages: ['g++-5','ccache','libboost1.55-all-dev','qt-latest','qtcreator-latest']
+      env: COMPILERCXX=g++-5 COMPILERCC=gcc-5 TRAVIS_MEDUSA_BUILD_WITH_OGDF=FALSE BUILD_TYPE=Release
 cache:
 - ccache
 - apt
@@ -35,7 +56,7 @@ before_script:
   - export CC="ccache $COMPILERCC"
   - export CXX="ccache $COMPILERCXX"
   - ccache -s
-  - cmake .. -DMEDUSA_BUILD_WITH_OGDF=$TRAVIS_MEDUSA_BUILD_WITH_OGDF -DCMAKE_BUILD_TYPE=Release
+  - cmake .. -DMEDUSA_BUILD_WITH_OGDF=$TRAVIS_MEDUSA_BUILD_WITH_OGDF -DCMAKE_BUILD_TYPE=$BUILD_TYPE
   - cd ..
 
 script:
