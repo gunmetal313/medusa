@@ -21,7 +21,7 @@ matrix:
       addons:
         apt:
           sources: ['ubuntu-toolchain-r-test']
-          packages: ['libqt4-core','libqt4-gui','libqt4-dev','qt4-dev-tools','qt4-qmake','python-pygments','libxml2-utils','libpcre3','gdb','unzip','ccache']
+          packages: ['python-pygments','libxml2-utils','libpcre3','gdb','unzip','ccache']
       env: TRAVIS_CPPCAT=TRUE
       script: echo "ignore"
       before_install:
@@ -35,7 +35,7 @@ matrix:
         - export PATH=$(pwd)/cppcheck:$PATH
         - pwd
         - cppcheck --version
-        - cppcheck -q -j4 --enable=all  --template='{id} {file}:{line} {message}' --suppress=variableScope --platform=unix64 -I inc/medusa .
+        - cppcheck -q -j4 --enable=all  --template='{id} {file}:{line} {message}' --suppress=variableScope --platform=unix64 -I inc/medusa ./src
 cache:
 - ccache
 - apt
