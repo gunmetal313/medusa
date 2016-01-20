@@ -28,12 +28,12 @@ matrix:
         - git clone https://github.com/danmar/cppcheck.git cppcheck
         - cd cppcheck
         - pwd
+        - export CC="ccache $COMPILERCC"
+        - export CXX="ccache $COMPILERCXX"
         - make
         - ls -la
       before_script:
         - cd ..
-        - export CC="ccache $COMPILERCC"
-        - export CXX="ccache $COMPILERCXX"
         - export PATH=$(pwd)/cppcheck:$PATH
         - pwd
         - cppcheck --version
