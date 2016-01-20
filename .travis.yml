@@ -30,11 +30,12 @@ matrix:
         - pwd
         - make
         - ls -la
-        - export CC="ccache $COMPILERCC"
-        - export CXX="ccache $COMPILERCXX"
       script:
         - cd ..
+        - export CC="ccache $COMPILERCC"
+        - export CXX="ccache $COMPILERCXX"
         - export PATH=$(pwd)/cppcheck:$PATH
+        - pwd
         - cppcheck --version
         - cppcheck -q -j4 --enable=all --suppress=variableScope --platform=unix64 ./
 cache:
