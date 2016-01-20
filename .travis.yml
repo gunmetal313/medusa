@@ -9,6 +9,14 @@ matrix:
           sources: ['ubuntu-toolchain-r-test','boost-latest']
           packages: ['gcc-4.9','g++-4.9','ccache','libboost1.55-all-dev']
       env: COMPILER=g++-4.9
+	  
+    - os: linux
+      compiler: gcc
+      addons:
+        apt:
+          sources: ['ubuntu-toolchain-r-test','boost-latest']
+          packages: ['g++-5','ccache','libboost1.55-all-dev']
+      env: COMPILER=g++-5
 
 cache:
 - ccache
@@ -16,8 +24,8 @@ cache:
 
 before_install:
   - git submodule update --init --recursive
-  - export CC="ccache gcc-4.9"
-  - export CXX="ccache g++-4.9"
+  #- export CC="ccache gcc-4.9"
+  #- export CXX="ccache g++-4.9"
   - cd .travis
   - wget --no-check-certificate -O cmake.tar.gz http://www.cmake.org/files/v3.2/cmake-3.2.1-Linux-x86_64.tar.gz
   - tar xvzf cmake.tar.gz
