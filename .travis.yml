@@ -21,7 +21,7 @@ matrix:
       addons:
         apt:
           sources: ['ubuntu-toolchain-r-test']
-          packages: ['gcc-4.9','g++-4.9','python-pygments','libxml2-utils','libpcre3','gdb','unzip','ccache']
+          packages: ['libqt4-core','libqt4-gui','libqt4-dev','qt4-dev-tools','qt4-qmake','gcc-4.9','g++-4.9','python-pygments','libxml2-utils','libpcre3','gdb','unzip','ccache']
       env: COMPILERCXX=g++-4.9 COMPILERCC=gcc-4.9 TRAVIS_CPPCAT=TRUE
       script: echo "ignore"
       before_install:
