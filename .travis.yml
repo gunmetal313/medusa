@@ -21,7 +21,7 @@ matrix:
       addons:
         apt:
           sources: ['ubuntu-toolchain-r-test']
-          packages: ['python-pygments','libxml2-utils','libpcre3','gdb','unzip','ccache']
+          packages: ['g++-5','python-pygments','libxml2-utils','libpcre3','gdb','unzip','ccache']
       env: COMPILERCXX=g++-5 COMPILERCC=gcc-5 TRAVIS_CPPCAT=TRUE
       script: echo "no"
       before_install:
@@ -37,7 +37,7 @@ matrix:
         - export PATH=$(pwd)/cppcheck:$PATH
         - pwd
         - cppcheck --version
-        - cppcheck -q -j4 --enable=all --suppress=variableScope --platform=unix64 ./
+        - cppcheck -q -j4 --enable=all  --template='{id} {file}:{line} {message}' --suppress=variableScope --platform=unix64 ./
 cache:
 - ccache
 - apt
