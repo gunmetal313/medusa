@@ -8,7 +8,7 @@ matrix:
         apt:
           sources: ['ubuntu-toolchain-r-test','boost-latest']
           packages: ['gcc-4.9','g++-4.9','ccache','libboost1.55-all-dev']
-      env: - COMPILERCXX=g++-4.9 COMPILERCC=gcc-4.9 TRAVIS_MEDUSA_BUILD_WITH_OGDF=TRUE
+      env: COMPILERCXX=g++-4.9 COMPILERCC=gcc-4.9 TRAVIS_MEDUSA_BUILD_WITH_OGDF=TRUE
     - os: linux
       compiler: gcc
       addons:
@@ -16,13 +16,6 @@ matrix:
           sources: ['ubuntu-toolchain-r-test','boost-latest']
           packages: ['g++-5','ccache','libboost1.55-all-dev']
       env: COMPILERCXX=g++-5
-    - os: linux
-      compiler: clang
-      addons:
-        apt:
-          sources: ['ubuntu-toolchain-r-test','llvm-toolchain-precise-3.6']
-          packages: ['ccache','libboost1.55-all-dev','clang-3.6']
-      env: COMPILERCXX=clang++-3.6
 cache:
 - ccache
 - apt
