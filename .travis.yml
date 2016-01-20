@@ -20,9 +20,9 @@ matrix:
       compiler: gcc
       addons:
         apt:
-          sources: ['ubuntu-toolchain-r-test','boost-latest','beineri/opt-qt55']
+          sources: ['ubuntu-toolchain-r-test','boost-latest','qt551']
           packages: ['g++-5','ccache','libboost1.55-all-dev','qt-latest','qtcreator-latest']
-      env: TRAVIS_QT=TRUE COMPILERCXX=g++-5 COMPILERCC=gcc-5 TRAVIS_MEDUSA_BUILD_WITH_OGDF=FALSE BUILD_TYPE=Release
+      env: TRAVIS_QT=V5.5 COMPILERCXX=g++-5 COMPILERCC=gcc-5 TRAVIS_MEDUSA_BUILD_WITH_OGDF=FALSE BUILD_TYPE=Release
 cache:
 - ccache
 - apt
