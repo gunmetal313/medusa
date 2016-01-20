@@ -21,14 +21,12 @@ matrix:
       addons:
         apt:
           sources: ['ubuntu-toolchain-r-test']
-          packages: ['libqt4-core','libqt4-gui','libqt4-dev','qt4-dev-tools','qt4-qmake','g++-5','python-pygments','libxml2-utils','libpcre3','gdb','unzip','ccache']
-      env: COMPILERCXX=g++-5 COMPILERCC=gcc-5 TRAVIS_CPPCAT=TRUE
+          packages: ['libqt4-core','libqt4-gui','libqt4-dev','qt4-dev-tools','qt4-qmake','python-pygments','libxml2-utils','libpcre3','gdb','unzip','ccache']
+      env: TRAVIS_CPPCAT=TRUE
       script: echo "ignore"
       before_install:
         - git clone https://github.com/danmar/cppcheck.git cppcheck
         - cd cppcheck
-        - export CC="$COMPILERCC"
-        - export CXX="$COMPILERCXX"
         - pwd
         - make
         - ls -la
