@@ -23,13 +23,13 @@ matrix:
           sources: ['ubuntu-toolchain-r-test']
           packages: ['g++-5','python-pygments','libxml2-utils','libpcre3','gdb','unzip','ccache']
       env: COMPILERCXX=g++-5 COMPILERCC=gcc-5 TRAVIS_CPPCAT=TRUE
-      script: echo "no"
+      script: echo "ignore"
       before_install:
         - git clone https://github.com/danmar/cppcheck.git cppcheck
         - cd cppcheck
         - pwd
-        - export CC="ccache $COMPILERCC"
-        - export CXX="ccache $COMPILERCXX"
+        - export CC="$COMPILERCC"
+        - export CXX="$COMPILERCXX"
         - make
         - ls -la
       before_script:
