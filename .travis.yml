@@ -16,26 +16,6 @@ matrix:
           sources: ['ubuntu-toolchain-r-test','boost-latest']
           packages: ['g++-5','ccache','libboost1.55-all-dev']
       env: COMPILERCXX=g++-5 COMPILERCC=gcc-5 TRAVIS_MEDUSA_BUILD_WITH_OGDF=FALSE
-    - os: linux
-      compiler: gcc
-      addons:
-        apt:
-          sources: ['ubuntu-toolchain-r-test']
-          packages: ['python-pygments','libxml2-utils','libpcre3','gdb','unzip','ccache']
-      env: TRAVIS_CPPCAT=TRUE
-      script: echo "ignore"
-      before_install:
-        - git clone https://github.com/danmar/cppcheck.git cppcheck
-        - cd cppcheck
-        - pwd
-        - make
-        - ls -la
-      before_script:
-        - cd ..
-        - export PATH=$(pwd)/cppcheck:$PATH
-        - pwd
-        - cppcheck --version
-        - cppcheck -q -j4 --enable=all  --template='{id} {file}:{line} {message}' --suppress=variableScope --platform=unix64 -I inc/medusa ./src
 cache:
 - ccache
 - apt
