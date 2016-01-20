@@ -27,13 +27,13 @@ matrix:
       before_install:
         - git clone https://github.com/danmar/cppcheck.git cppcheck
         - cd cppcheck
+        - export CC="ccache $COMPILERCC"
+        - export CXX="ccache $COMPILERCXX"
         - pwd
         - make
         - ls -la
       before_script:
         - cd ..
-        - export CC="ccache $COMPILERCC"
-        - export CXX="ccache $COMPILERCXX"
         - export PATH=$(pwd)/cppcheck:$PATH
         - pwd
         - cppcheck --version
