@@ -9,7 +9,8 @@ matrix:
           sources: ['ubuntu-toolchain-r-test','boost-latest']
           packages: ['gcc-4.9','g++-4.9','ccache','libboost1.55-all-dev']
       env:
-        - COMPILER='ccache g++-4.9'
+        - COMPILER='ccache g++-4.9' TRAVIS_MEDUSA_BUILD_WITH_OGDF=TRUE
+        - COMPILER='ccache g++-4.9' TRAVIS_MEDUSA_BUILD_WITH_OGDF=FALSE
     - os: linux
       compiler: gcc
       addons:
@@ -43,7 +44,7 @@ before_script:
   - mkdir build_release
   - cd build_release
   - ccache -s
-  - cmake .. -DCMAKE_BUILD_TYPE=Release
+  - cmake .. -DMEDUSA_CMAKE_USE_COTIRE=TRUE -DMEDUSA_BUILD_WITH_OGDF=$TRAVIS_MEDUSA_BUILD_WITH_OGDF -DCMAKE_BUILD_TYPE=Release
   - cd ..
 
 script:
