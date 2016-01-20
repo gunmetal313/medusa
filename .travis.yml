@@ -34,6 +34,7 @@ matrix:
         - cd ..
         - export PATH=$(pwd)/cppcheck:$PATH
         - cppcheck --version
+        - cppcheck -q -j4 --enable=all --suppress=variableScope --platform=unix64 ./
 cache:
 - ccache
 - apt
